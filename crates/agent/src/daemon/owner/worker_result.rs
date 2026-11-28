@@ -1571,6 +1571,9 @@ async fn run_request_check(job: RequestCheck) -> Found {
 #[cfg(test)]
 pub(super) mod tests;
 
+#[cfg(test)]
+mod pause_tests;
+
 /// Retains the actual rejection causes alongside a retry snapshot.
 pub(super) fn rejection_causes(checked: &Checked, ending: WorkerEnding, seconds: u64, limit: u64) -> Vec<Wrong> {
     let mut facts = facts_of(checked, seconds, limit);

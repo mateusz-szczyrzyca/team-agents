@@ -7,6 +7,7 @@
 //! Every decision is a pure function of its arguments — the clock and the random source included — and returns
 //! what the daemon is to do, never doing it: no file, process or network is touched here (`docs/architecture.md`).
 
+pub mod account_candidates;
 pub mod account_pause;
 pub mod asleep;
 pub mod assign;

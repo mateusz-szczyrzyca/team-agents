@@ -111,6 +111,9 @@ struct OwnedPoolWorker {
     capabilities: Vec<String>,
     /// Whether another request already reserves this worker.
     busy: bool,
+    /// Whether the worker takes no request now, whatever its runs are: it is in an active crew, its provider refused it
+    /// or its account is paused. A recount of its runs never lifts it.
+    barred: bool,
     /// Ordinary runs counted against the configured limit.
     runs: u32,
     /// Whether a result or cleanup still needs settlement.
@@ -897,7 +900,7 @@ impl Owner {
         let busy = self.agents_in_runs();
         // An agent its provider refused takes no item until its return: busy for the assignment, as a running one is.
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
+        let refused = self.unavailable_agents_at(now);
         let candidates: Vec<_> = outside
             .iter()
             .map(|agent| agent_core::decide::part::Candidate {
@@ -1294,7 +1297,8 @@ impl Owner {
         }
 
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
+        let refused = self.unavailable_agents_at(now);
+        let free = self.not_of_paused_accounts(&pool, now);
         let mut pool_workers_data = Vec::new();
         for name in &pool {
             let Some(agent_conf) = self.parts.settings.config.agent(name) else {
@@ -1303,11 +1307,13 @@ impl Owner {
             let provider = provider_of(agent_conf.cli, agent_conf.model.as_ref()).to_owned();
             let capabilities = agent_conf.capabilities.clone();
             let avail = self.worker_availability(name).await;
+            let barred = self.is_in_active_crew(name) || refused.contains(name) || !free.contains(name);
             pool_workers_data.push(OwnedPoolWorker {
                 name: name.clone(),
                 provider,
                 capabilities,
-                busy: avail.busy || self.is_in_active_crew(name) || refused.contains(name),
+                busy: avail.busy || barred,
+                barred,
                 runs: avail.runs,
                 unsettled: avail.unsettled,
             });
@@ -1333,7 +1339,7 @@ impl Owner {
             if recovering {
                 for worker in &mut pool_workers_data {
                     let availability = self.worker_availability_except(&worker.name, Some(req.id)).await;
-                    worker.busy = availability.busy || self.is_in_active_crew(&worker.name);
+                    worker.busy = availability.busy || worker.barred;
                     worker.runs = availability.runs;
                     worker.unsettled = availability.unsettled;
                 }
@@ -1408,7 +1414,7 @@ impl Owner {
                 Ok(None) => {
                     let avail = self.worker_availability(&worker_name).await;
                     if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
-                        entry.busy = avail.busy;
+                        entry.busy = avail.busy || entry.barred;
                         entry.runs = avail.runs;
                         entry.unsettled = avail.unsettled;
                     }
@@ -1424,7 +1430,7 @@ impl Owner {
                     );
                     let avail = self.worker_availability(&worker_name).await;
                     if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
-                        entry.busy = avail.busy;
+                        entry.busy = avail.busy || entry.barred;
                         entry.runs = avail.runs;
                         entry.unsettled = avail.unsettled;
                     }
@@ -1439,7 +1445,7 @@ impl Owner {
 
             let avail = self.worker_availability(&worker_name).await;
             if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
-                entry.busy = avail.busy;
+                entry.busy = avail.busy || entry.barred;
                 entry.runs = avail.runs;
                 entry.unsettled = avail.unsettled;
             }
@@ -2040,6 +2046,15 @@ impl Owner {
         }
         let mut workers = Vec::new();
         let mut busy = Vec::new();
+        let names: Vec<AgentName> = team
+            .crew()
+            .roster()
+            .into_iter()
+            .filter(|(role, _)| *role == Role::Worker)
+            .map(|(_, member)| member.agent().name().parse())
+            .collect::<Result<_, _>>()?;
+        // A worker whose account is paused takes no request: it is busy for every choice, the second try included.
+        let free = self.not_of_paused_accounts(&names, Timestamp::now(&self.parts.clock)?);
         for (_, member) in team
             .crew()
             .roster()
@@ -2049,6 +2064,7 @@ impl Owner {
             let name: AgentName = member.agent().name().parse()?;
             // A worker whose result is not settled yet is busy: its worktree is what the check reads and the commit comes from.
             if member.status() != TaskStatus::Waiting
+                || !free.contains(&name)
                 || self.serving.contains_key(member.task())
                 || agent_runtime::worker_request::has_pending_except(
                     &self.parts.store.home().task_dir(member.task()),

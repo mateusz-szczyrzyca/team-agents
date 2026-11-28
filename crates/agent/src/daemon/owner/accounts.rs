@@ -7,6 +7,9 @@
 use std::collections::BTreeSet;
 
 use agent_core::config::AccountName;
+use agent_core::decide::account_candidates::{
+    Candidate, agents_of_paused_accounts, candidates_with_accounts, investigators_of_paused_accounts, paused_accounts,
+};
 use agent_core::decide::account_pause::{AccountPauseOutcome, decide};
 use agent_core::decide::limit::Limit;
 use agent_core::decide::outcome::PauseReason;
@@ -43,9 +46,52 @@ impl Owner {
 
     /// Whether the account of `agent` is paused at `now`: none of its runs starts.
     pub(super) fn account_is_paused(&self, agent: &str, now: Timestamp) -> bool {
-        self.account_named(agent)
-            .and_then(|account| self.parts.state.account_pause(&account).map(|pause| now < pause.until))
-            .unwrap_or(false)
+        self.account_paused_until(agent, now).is_some()
+    }
+
+    /// The end of the pause of the account of `agent` when it is paused at `now`.
+    pub(super) fn account_paused_until(&self, agent: &str, now: Timestamp) -> Option<Timestamp> {
+        let account = self.account_named(agent)?;
+        self.parts
+            .state
+            .account_pause(&account)
+            .map(|pause| pause.until)
+            .filter(|until| now < *until)
+    }
+
+    /// The agents that take nothing new at `now`: those their provider refused and the agents and investigators whose
+    /// account is paused. An agent of a paused account is picked for nothing — no replacement, no hand-over, no worker
+    /// for a request.
+    pub(super) fn unavailable_agents_at(&self, now: Timestamp) -> Vec<AgentName> {
+        let mut agents = self.parts.state.refused_agents_at(now);
+        let (state, config) = (&self.parts.state, &self.parts.settings.config);
+        agents.extend(agents_of_paused_accounts(state, config, now));
+        agents.extend(
+            investigators_of_paused_accounts(state, config, now)
+                .iter()
+                .map(AgentName::from),
+        );
+        agents
+    }
+
+    /// The agents of `names` that may be picked at `now`, in their order: those whose account is not paused. An agent
+    /// without an account is always one of them. This is [`candidates_with_accounts`] on the accounts of the
+    /// configuration.
+    pub(super) fn not_of_paused_accounts(&self, names: &[AgentName], now: Timestamp) -> Vec<AgentName> {
+        let paused = paused_accounts(&self.parts.state, now);
+        let accounts: Vec<Option<AccountName>> = names.iter().map(|name| self.account_of(name)).collect();
+        let candidates: Vec<Candidate<'_, AgentName>> = names
+            .iter()
+            .zip(&accounts)
+            .map(|(name, account)| Candidate {
+                name,
+                account: account.as_ref(),
+            })
+            .collect();
+        candidates_with_accounts(&candidates, &paused)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// The agents and investigators that have `account`, in name order.
@@ -154,8 +200,14 @@ impl Owner {
     }
 
     /// Records that the pause of the account holds `task`, which wakes at `until`.
-    fn hold(&mut self, task: &TaskId, until: Timestamp) {
+    pub(super) fn hold(&mut self, task: &TaskId, until: Timestamp) {
         self.parts.state.hold_task_for_account(task.clone());
+        self.wakes.insert(task.clone(), until);
+    }
+
+    /// Records that `task` waits for the pause of the account of its lead and wakes at `until`, the end of that pause.
+    pub(super) fn hold_waiting(&mut self, task: &TaskId, until: Timestamp) {
+        self.parts.state.hold_task_waiting(task.clone(), until);
         self.wakes.insert(task.clone(), until);
     }
 
@@ -243,10 +295,13 @@ impl Owner {
                 self.parts.state.release_task_from_account(&task);
                 continue;
             }
-            let until = self
-                .account_named(found.member.agent().name())
-                .and_then(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
-                .unwrap_or(now);
+            // A task that waits for its lead's account is woken when that pause ends; any other held task, when the
+            // pause of its own agent's account does.
+            let until = self.parts.state.wait_of_task(&task).unwrap_or_else(|| {
+                self.account_named(found.member.agent().name())
+                    .and_then(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
+                    .unwrap_or(now)
+            });
             self.wakes.insert(task, until);
         }
     }

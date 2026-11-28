@@ -5205,4 +5205,36 @@ git commit -qm 'Complete retained work'
         std::fs::write(world.worktree(task(&tasks, "claude-1")).join(".fake-ask"), "").unwrap();
         assert_eq!(world.environment_seen_by("comp-glm-1"), COMP_ENVIRONMENT);
     }
+    // Rule: a request is not given to a pool worker whose account is paused: the worker of another account serves it.
+    #[test]
+    fn worker_request_skips_paused_account() {
+        let mut world = World::new(&[
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("inv-opus", "investigator", "sleep"),
+            ("comp-glm-1", "worker", "env-sleep:ACCOUNT_VARIABLE+ACCOUNT_SECRET"),
+            ("glm-2", "worker", "env-sleep:ACCOUNT_VARIABLE+ACCOUNT_SECRET"),
+        ]);
+        world.give_comp_account("comp-glm-1");
+        let mut state = agent_core::state::State::default();
+        state.record_account_pause(
+            "comp-claude".parse().unwrap(),
+            Some(agent_core::state::AccountPause {
+                until: "2100-01-01T00:00:00Z".parse().unwrap(),
+                reason: agent_core::decide::limit::Limit::Quota { reset_in: None },
+            }),
+        );
+        std::fs::write(world.home.join("state.json"), state.to_json().unwrap()).unwrap();
+        world.allow_tries(1);
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+
+        std::fs::write(world.worktree(task(&tasks, "claude-1")).join(".fake-ask"), "").unwrap();
+        world.environment_seen_by("glm-2");
+        assert!(
+            !world.home.join("env-seen-comp-glm-1.txt").exists(),
+            "the worker of the paused account served the request"
+        );
+    }
 }
