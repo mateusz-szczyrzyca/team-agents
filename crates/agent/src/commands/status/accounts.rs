@@ -10,7 +10,7 @@ use agent_core::ids::TaskId;
 use agent_core::local_time::Zone;
 use agent_core::protocol::TeamSummary;
 use agent_core::state::State;
-use agent_core::state::{AccountPause, Timestamp};
+use agent_core::state::{AccountPause, LimitReadings, Timestamp};
 use agent_core::status::TaskStatus;
 
 #[cfg(test)]
@@ -43,6 +43,14 @@ pub(crate) fn account_lines<'a>(
         })
         .collect();
     (!lines.is_empty()).then(|| lines.concat())
+}
+
+/// The lines that tell, for each account and each agent without one that has a reading, how much of its rate-limit windows
+/// is used at `now` — `comp-claude: 5h 62% (resets 15:30, read 3 min ago), 7d 41% (...)` — in the order of `readings`;
+/// `None` when no reading is kept.
+#[must_use]
+pub(crate) fn reading_lines(_readings: &LimitReadings, _now: Timestamp, _zone: Zone) -> Option<String> {
+    None
 }
 
 /// What each queued task of `teams` whose account has its `max_runs` going says of it, by task, as the runs of `state`

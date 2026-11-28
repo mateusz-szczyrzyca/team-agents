@@ -1265,12 +1265,14 @@ pub(crate) struct Reads {
 fn provider_lines(state: &agent_core::state::State, now: Timestamp, zone: Zone) -> Option<String> {
     let accounts = accounts::account_lines(state.account_pauses(), now, zone);
     let agents = refusals::refused_line(&state.refusals_at(now), zone);
-    match (accounts, agents) {
-        (None, None) => None,
-        (accounts, agents) => Some(format!(
-            "{}{}",
+    let readings = accounts::reading_lines(state.limit_readings(), now, zone);
+    match (accounts, agents, readings) {
+        (None, None, None) => None,
+        (accounts, agents, readings) => Some(format!(
+            "{}{}{}",
             accounts.unwrap_or_default(),
-            agents.unwrap_or_default()
+            agents.unwrap_or_default(),
+            readings.unwrap_or_default()
         )),
     }
 }
@@ -1626,3 +1628,7 @@ mod account_label_tests;
 #[cfg(test)]
 #[path = "status/tests/account_status.rs"]
 mod account_status_tests;
+
+#[cfg(test)]
+#[path = "status/tests/reading_status.rs"]
+mod reading_status_tests;
