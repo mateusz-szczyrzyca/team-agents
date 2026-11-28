@@ -457,3 +457,49 @@ async fn shift_ignores_replacements_zero() {
 
     rig.stop().await.unwrap();
 }
+
+// A shift keeps idle member tasks idle and moves the bus's coordinator with the task.
+#[tokio::test]
+async fn shift_keeps_idle_members_waiting_and_moves_bus_lead() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "sleep,integrate,hold"),
+            normal("claude-2", "commit-clean,hold"),
+            normal("claude-3", "sleep,hold"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[limits]\nidle_team_minutes = 0\nlead_shift_minutes = 120\n");
+    rig.wake_sleeping_teams();
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-1", "claude-2", "claude-3"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-1"),
+        )
+        .await;
+    rig.item_where("1.1", "pull request open", |phase| {
+        matches!(phase, ItemPhase::Fixing { .. })
+    })
+    .await;
+    rig.prompt(&tasks[0], 3).await;
+    rig.advance_history_days(1);
+    rig.state_where("coordinator task traded", |state| {
+        holder(state, &tasks[0]) == "claude-2"
+    })
+    .await;
+    rig.prompt(&tasks[0], 4).await;
+    let state = rig.state();
+    assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Waiting);
+    assert_eq!(state.find_task(&tasks[2]).unwrap().member.status(), TaskStatus::Waiting);
+    let bus: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap()).unwrap();
+    assert_eq!(bus["teams"][team.as_str()]["lead"], "claude-2");
+    rig.stop().await.unwrap();
+}
