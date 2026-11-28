@@ -1,14 +1,15 @@
 //! The hold of an account at its `hold_at`: while a window of its limits is used up to that share, no new run of its
 //! agents starts, until the window resets. The runs going finish, the queued ones wait in the queue, nothing fails.
 //!
-//! [`agent_core::decide::account_hold::held_accounts`] is the rule and follows from the readings the state keeps, so a
-//! restart of the daemon keeps a hold. This module asks it, keeps the agents of a held account from being picked, and
-//! tells the human once when a hold begins and the log when it begins and ends.
+//! [`agent_core::decide::account_hold::held_accounts`] is the rule that a kept reading holds an account; the state records
+//! the hold when it begins, so that it lasts until the window resets whatever is read after it, and a restart of the
+//! daemon keeps it. This module asks the rule, keeps the agents of a held account from being picked, and tells the human
+//! once when a hold begins and the log when it begins and ends.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use agent_core::config::AccountName;
-use agent_core::decide::account_hold::{Hold, held_accounts};
+use agent_core::decide::account_hold::{Hold, held_accounts, held_until};
 use agent_core::ids::AgentName;
 use agent_core::limit_reading::LimitWindow;
 use agent_core::log::LogEvent;
@@ -17,15 +18,10 @@ use agent_core::state::Timestamp;
 
 use super::{Owner, error_chain};
 
-/// The holds the daemon has told, by account, with the end of each. Boxed in the owner: a plain map there would make the
-/// futures of the code that holds an owner across an await larger than clippy's limit.
-#[derive(Debug, Default)]
-pub(super) struct KnownHolds(BTreeMap<AccountName, Timestamp>);
-
 impl Owner {
-    /// The accounts that are held at `now`.
+    /// The accounts that are held at `now`: those the state records a hold of and those a kept reading holds.
     pub(super) fn held_account_names(&self, now: Timestamp) -> BTreeSet<AccountName> {
-        held_accounts(&self.parts.state, &self.parts.settings.config, now)
+        held_until(&self.parts.state, &self.parts.settings.config, now)
             .into_keys()
             .collect()
     }
@@ -56,31 +52,24 @@ impl Owner {
         agents.chain(investigators).collect()
     }
 
-    /// Takes the holds of the state as the daemon knows them, without telling anyone: a hold that began before a
-    /// restart was told then.
-    pub(super) fn remember_holds(&mut self, now: Timestamp) {
-        self.account_holds.0 = held_accounts(&self.parts.state, &self.parts.settings.config, now)
-            .into_iter()
-            .filter_map(|(account, hold)| match hold {
-                Hold::Open => None,
-                Hold::Held { until, .. } => Some((account, until)),
-            })
+    /// Brings the holds the state records to those at `now`: a hold that a reading begins is recorded, logged and told to
+    /// the human, once; a recorded hold whose window has reset, or whose account has no `hold_at` any more, is forgotten
+    /// and logged. A hold is recorded when it begins, so a later reading below `hold_at` does not end it and a daemon that
+    /// starts again does not tell it again.
+    ///
+    /// Returns whether the state changed, so that its caller saves it.
+    pub(super) async fn update_holds(&mut self, now: Timestamp) -> bool {
+        let (state, config) = (&self.parts.state, &self.parts.settings.config);
+        let live = held_until(state, config, now);
+        let ended: Vec<AccountName> = state
+            .account_holds()
+            .map(|(account, _)| account.clone())
+            .filter(|account| !live.contains_key(account))
             .collect();
-    }
-
-    /// Compares the holds at `now` with the ones the daemon knows: logs each hold that ended, and logs and tells the human
-    /// of each that began.
-    pub(super) async fn update_holds(&mut self, now: Timestamp) {
-        let current = held_accounts(&self.parts.state, &self.parts.settings.config, now);
-        let ended: Vec<AccountName> = self
-            .account_holds
-            .0
-            .keys()
-            .filter(|account| !current.contains_key(*account))
-            .cloned()
-            .collect();
+        let by_readings = held_accounts(state, config, now);
+        let mut changed = !ended.is_empty();
         for account in ended {
-            self.account_holds.0.remove(&account);
+            self.parts.state.record_account_hold(account.clone(), None);
             tracing::debug!(
                 event = LogEvent::DecisionTaken.as_str(),
                 decision = "account_released",
@@ -89,16 +78,25 @@ impl Owner {
                 "the hold of an account ended: its queued runs start"
             );
         }
-        for (account, hold) in current {
-            match hold {
-                Hold::Open => {}
-                Hold::Held { window, used, until } => {
-                    if self.account_holds.0.insert(account.clone(), until).is_none() {
-                        Box::pin(self.begin_hold(&account, window, used, until)).await;
-                    }
+        for (account, hold) in by_readings {
+            let Hold::Held { window, used, until } = hold else {
+                continue;
+            };
+            match self.parts.state.account_hold_until(&account) {
+                None => {
+                    self.parts.state.record_account_hold(account.clone(), Some(until));
+                    changed = true;
+                    Box::pin(self.begin_hold(&account, window, used, until)).await;
                 }
+                Some(recorded) if recorded < until => {
+                    // A second window at `hold_at` that resets later: the same hold, longer.
+                    self.parts.state.record_account_hold(account, Some(until));
+                    changed = true;
+                }
+                Some(_) => {}
             }
         }
+        changed
     }
 
     /// Logs the hold of `account` that begins and tells the human, once.
