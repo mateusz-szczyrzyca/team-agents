@@ -1,6 +1,7 @@
 //! `agent status`: the teams the daemon knows, their rounds, and what each of their tasks is doing — or, for a round, its
 //! item, the tasks that worked for it, its pull request and its review passes.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -218,17 +219,55 @@ impl Activity {
         })
     }
 
-    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
-    /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
-    /// configured CLIs and is the only reason a configuration is omitted.
+    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. A missing
+    /// configuration has no configured CLIs and is the only reason a configuration is omitted. What the status prints
+    /// reads the file once, through [`Activity::cli_runs_and_accounts`].
     ///
     /// # Errors
     /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    #[cfg(test)]
     pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+        Ok(self.cli_runs_and_accounts(teams).await?.0)
+    }
+
+    /// The line counting the runs going per configured CLI across `teams` and the account each agent and investigator
+    /// of the configuration runs with, from one read of the file; neither when there is no configuration.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn cli_runs_and_accounts(
+        &self,
+        teams: &[TeamSummary],
+    ) -> Result<(Option<String>, members::Accounts), StatusError> {
+        Ok(self.config().await?.map_or_else(
+            || (None, BTreeMap::new()),
+            |config| {
+                (
+                    cli_runs_line(&config, teams),
+                    agent_core::account_view::agent_accounts(&config),
+                )
+            },
+        ))
+    }
+
+    /// The account each agent and investigator of the configuration runs with; none when there is no configuration.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn accounts(&self) -> Result<members::Accounts, StatusError> {
+        Ok(self.cli_runs_and_accounts(&[]).await?.1)
+    }
+
+    /// The configuration, read asynchronously so status rendering never blocks its runtime thread; `None` when the file
+    /// does not exist, the only reason a configuration is omitted.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn config(&self) -> Result<Option<agent_core::config::Config>, StatusError> {
         let path = self.home.config_file();
         match tokio::fs::read_to_string(&path).await {
             Ok(text) => agent_core::config::Config::from_toml_str(&text)
-                .map(|config| cli_runs_line(&config, teams))
+                .map(Some)
                 .map_err(|source| StatusError::ConfigParse { path, source }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(StatusError::ConfigRead { path, source }),
@@ -445,17 +484,20 @@ async fn listing_text(
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
-    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
+    let (cli_runs, accounts) = activity.cli_runs_and_accounts(&listing.teams).await?;
     let refused = activity.provider_lines().await?;
-    let text = render_with_requests(
+    let text = render_with_accounts(
         &listing.teams,
         View::Full,
         detail,
         &|task| activity.of(task),
         &|round| told.of(round),
-        Under {
-            requests: &|task| requests.of(task).to_vec(),
-            workers: &|_| Vec::new(),
+        Extras {
+            under: Under {
+                requests: &|task| requests.of(task).to_vec(),
+                workers: &|_| Vec::new(),
+            },
+            accounts: &accounts,
         },
         activity.zone,
     );
@@ -482,7 +524,7 @@ async fn running_text(
     query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
-    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
+    let (cli_runs, accounts) = activity.cli_runs_and_accounts(&listing.teams).await?;
     let refused = activity.provider_lines().await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
@@ -515,21 +557,24 @@ async fn running_text(
     } else {
         let told = rounds::told(connection, activity, &listed).await?;
         let requests = requests_of(activity, &listed, detail).await;
-        let text = render_with_requests(
+        let text = render_with_accounts(
             &listed,
             View::Running,
             detail,
             &|task| activity.of(task),
             &|round| told.of(round),
-            Under {
-                requests: &|task| requests.of(task).to_vec(),
-                workers: &|team| {
-                    served
-                        .iter()
-                        .find(|(id, _)| *id == team.id)
-                        .map(|(_, lines)| lines.clone())
-                        .unwrap_or_default()
+            Extras {
+                under: Under {
+                    requests: &|task| requests.of(task).to_vec(),
+                    workers: &|team| {
+                        served
+                            .iter()
+                            .find(|(id, _)| *id == team.id)
+                            .map(|(_, lines)| lines.clone())
+                            .unwrap_or_default()
+                    },
                 },
+                accounts: &accounts,
             },
             activity.zone,
         );
@@ -890,7 +935,11 @@ async fn show_round(
 ) -> Result<(), StatusError> {
     let detail = round_detail(connection, round.clone()).await?;
     let zone = activity.map_or(Zone::Fixed(UtcOffset::UTC), |activity| activity.zone);
-    let mut text = render_round_in(&detail, zone);
+    let accounts = match activity {
+        Some(activity) => activity.accounts().await?,
+        None => BTreeMap::new(),
+    };
+    let mut text = render_round_with_accounts(&detail, zone, &accounts);
     if let Some(activity) = activity {
         text.push_str(&snapshots::snapshots_of(&activity.home, &round, activity.zone));
     }
@@ -980,21 +1029,24 @@ fn render_in(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
-    render_with_requests(
+    render_with_accounts(
         teams,
         view,
         detail,
         activity,
         rounds,
-        Under {
-            requests: &|_| Vec::new(),
-            workers: &|_| Vec::new(),
+        Extras {
+            under: Under {
+                requests: &|_| Vec::new(),
+                workers: &|_| Vec::new(),
+            },
+            accounts: &BTreeMap::new(),
         },
         zone,
     )
 }
 
-/// What [`render_with_requests`] writes under the lines of a team: the requests for workers under each task's plan,
+/// What [`render_with_accounts`] writes under the lines of a team: the requests for workers under each task's plan,
 /// and the workers that served the team before its count of tasks.
 #[derive(Clone, Copy)]
 struct Under<'a> {
@@ -1004,7 +1056,19 @@ struct Under<'a> {
     workers: &'a dyn Fn(&TeamSummary) -> Vec<workers::Served>,
 }
 
-/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
+/// What [`render_with_accounts`] writes besides the tasks themselves: what goes under them, and the account of each
+/// agent that has one, which the line of its task shows after its name.
+#[derive(Clone, Copy)]
+struct Extras<'a> {
+    /// What goes under the lines of a team.
+    under: Under<'a>,
+    /// The account of each agent and investigator that runs with one.
+    accounts: &'a members::Accounts,
+}
+
+/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them, and no
+/// account told: what the tests of those lines compare.
+#[cfg(test)]
 fn render_with_requests(
     teams: &[TeamSummary],
     view: View,
@@ -1014,6 +1078,32 @@ fn render_with_requests(
     under: Under<'_>,
     zone: Zone,
 ) -> String {
+    let accounts = BTreeMap::new();
+    render_with_accounts(
+        teams,
+        view,
+        detail,
+        activity,
+        rounds,
+        Extras {
+            under,
+            accounts: &accounts,
+        },
+        zone,
+    )
+}
+
+/// `render_with_requests` with the account of each agent that has one told after its name.
+fn render_with_accounts(
+    teams: &[TeamSummary],
+    view: View,
+    detail: Detail,
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    extras: Extras<'_>,
+    zone: Zone,
+) -> String {
+    let Extras { under, accounts } = extras;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -1022,7 +1112,7 @@ fn render_with_requests(
     let columns = served
         .iter()
         .flatten()
-        .fold(members::Columns::of(teams), |columns, worker| {
+        .fold(members::Columns::of(teams, accounts), |columns, worker| {
             columns.fit(agent_core::kinds::Role::Worker.to_string().len(), worker.agent_width())
         });
     let mut lines: Vec<String> = Vec::new();
@@ -1078,14 +1168,14 @@ fn render_with_requests(
                 team.members
                     .iter()
                     .filter(|member| members::listed(member))
-                    .map(|member| members::line(member, team, columns, activity, zone)),
+                    .map(|member| members::line(member, team, columns, accounts, activity, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(member, team, columns, activity, zone));
+            lines.push(members::line(member, team, columns, accounts, activity, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -1282,7 +1372,13 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs, its times in `zone`.
+#[cfg(test)]
 pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
+    render_round_with_accounts(detail, zone, &BTreeMap::new())
+}
+
+/// `render_round_in` with the account each agent runs with: an agent that has one is followed by it in brackets.
+pub(crate) fn render_round_with_accounts(detail: &RoundDetail, zone: Zone, accounts: &members::Accounts) -> String {
     let waiting = detail.waiting.as_deref().map_or_else(String::new, |waiting| {
         format!(", waits for {}", zone.stamp_waiting(waiting))
     });
@@ -1336,7 +1432,7 @@ pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
             "  {}  {}  {}  {}  {}",
             task.task,
             task.role,
-            task.agent.name(),
+            agent_core::account_view::labelled(task.agent.name(), accounts.get(&task.agent.agent_name())),
             task.worktree.as_path().display(),
             task.branch
         ));
@@ -1437,3 +1533,11 @@ mod versions_tests;
 #[cfg(test)]
 #[path = "status/tests/split_tier.rs"]
 mod split_tier_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_labels.rs"]
+mod account_label_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_status.rs"]
+mod account_status_tests;

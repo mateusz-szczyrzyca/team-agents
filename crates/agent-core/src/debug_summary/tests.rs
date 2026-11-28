@@ -1246,3 +1246,60 @@ fn each_earlier_run_of_a_task_is_told_with_its_own_tool_calls_before_the_last_ru
         .expect("the last run is told after the earlier ones");
     assert!(first < second && second < last, "{summary}");
 }
+
+/// The section `## Accounts` of the summary of the sample input with `accounts`, up to the next section.
+fn accounts_section(accounts: &[crate::account_view::AccountView]) -> String {
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid offset"));
+    let summary = render_command_summary_with_accounts(&sample_input(), accounts, zone, str::to_owned, None)
+        .expect("mandatory summary facts fit");
+    summary
+        .split("## Accounts\n")
+        .nth(1)
+        .expect("the section is there")
+        .split("\n## ")
+        .next()
+        .expect("a section has a body")
+        .to_owned()
+}
+
+#[test]
+fn accounts_section_lists_each_account_with_names_only() {
+    let accounts = [
+        crate::account_view::AccountView {
+            name: "comp-claude".parse().expect("valid account"),
+            owner: "comp".parse().expect("valid owner"),
+            agents: vec![
+                "comp-claude-1".parse().expect("valid agent"),
+                "comp-inv-opus".parse().expect("valid agent"),
+            ],
+            env: vec!["CLAUDE_CONFIG_DIR".parse().expect("valid variable")],
+            secrets: vec!["CLAUDE_CODE_OAUTH_TOKEN".parse().expect("valid variable")],
+        },
+        crate::account_view::AccountView {
+            name: "mateusz-codex".parse().expect("valid account"),
+            owner: "mateusz".parse().expect("valid owner"),
+            agents: Vec::new(),
+            env: Vec::new(),
+            secrets: Vec::new(),
+        },
+    ];
+
+    assert_eq!(
+        accounts_section(&accounts),
+        "
+- `comp-claude` (owner `comp`)
+  - Agents: comp-claude-1, comp-inv-opus
+  - Environment variables: CLAUDE_CONFIG_DIR
+  - Secret variables: CLAUDE_CODE_OAUTH_TOKEN
+- `mateusz-codex` (owner `mateusz`)
+  - Agents: none
+  - Environment variables: none
+  - Secret variables: none
+"
+    );
+}
+
+#[test]
+fn accounts_section_without_accounts_says_so() {
+    assert_eq!(accounts_section(&[]), "\nNo accounts are configured.\n");
+}
