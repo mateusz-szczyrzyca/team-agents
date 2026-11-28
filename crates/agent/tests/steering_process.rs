@@ -234,6 +234,65 @@ mod steering_process {
         );
     }
 
+    fn build_swap_bus(home: &Home) -> std::path::PathBuf {
+        let bus_binary = home.root().join("agentbus-under-test");
+        let built = Command::new("go")
+            .args(["build", "-o"])
+            .arg(&bus_binary)
+            .arg(".")
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agentbus"))
+            .output()
+            .unwrap();
+        assert!(built.status.success(), "{}", text(built.stderr));
+        let config = std::fs::read_to_string(home.config_file()).unwrap();
+        std::fs::write(
+            home.config_file(),
+            config.replace(
+                "[binaries]",
+                &format!("[binaries]\nagentbus = \"{}\"", bus_binary.display()),
+            ),
+        )
+        .unwrap();
+
+        bus_binary
+    }
+
+    fn create_swap_bus_team(home: &Home, bus_binary: &Path, team_id: &str, coord_id: &TaskId, member_id: &TaskId) {
+        let bus_team = serde_json::json!({
+            "id": team_id,
+            "repo": "team-agents",
+            "lead": "claude-1",
+            "members": {
+                "claude-1": {"agent": "claude-1", "task": coord_id.as_str(),
+                    "branch": "agents/claude-1", "worktree": home.worktree_dir(&repo(), coord_id),
+                    "state": "active", "tier": "normal"},
+                "claude-2": {"agent": "claude-2", "task": member_id.as_str(),
+                    "branch": "agents/claude-2", "worktree": home.worktree_dir(&repo(), member_id),
+                    "state": "active", "tier": "normal"}
+            }
+        });
+        let mut create = Command::new(bus_binary)
+            .arg("team-create")
+            .arg("--dir")
+            .arg(home.root().join("bus"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            create
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(bus_team.to_string().as_bytes())
+                .unwrap();
+        }
+        let created = create.wait_with_output().unwrap();
+        assert!(created.status.success(), "{}", text(created.stderr));
+    }
+
     #[test]
     fn team_coordinator_swapped_to_opencode_agent_runs_opencode_in_the_same_worktree() {
         use agent_core::state::TeamMembers;
@@ -266,24 +325,7 @@ mod steering_process {
         )
         .unwrap();
 
-        let bus_binary = dir.path().join("agentbus-under-test");
-        let built = Command::new("go")
-            .args(["build", "-o"])
-            .arg(&bus_binary)
-            .arg(".")
-            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agentbus"))
-            .output()
-            .unwrap();
-        assert!(built.status.success(), "{}", text(built.stderr));
-        let config = std::fs::read_to_string(home.config_file()).unwrap();
-        std::fs::write(
-            home.config_file(),
-            config.replace(
-                "[binaries]",
-                &format!("[binaries]\nagentbus = \"{}\"", bus_binary.display()),
-            ),
-        )
-        .unwrap();
+        let bus_binary = build_swap_bus(&home);
 
         let coord_id = TaskId::from_str(COORD_TASK).unwrap();
         let member_id = TaskId::from_str(MEMBER_TASK).unwrap();
@@ -315,39 +357,7 @@ mod steering_process {
         std::fs::create_dir_all(&member_worktree).unwrap();
         std::fs::write(member_worktree.join(".fake-scenario"), "busy").unwrap();
 
-        let bus_team = serde_json::json!({
-            "id": TEAM_ID,
-            "repo": "team-agents",
-            "lead": "claude-1",
-            "members": {
-                "claude-1": {"agent": "claude-1", "task": COORD_TASK,
-                    "branch": "agents/claude-1", "worktree": coord_worktree,
-                    "state": "active", "tier": "normal"},
-                "claude-2": {"agent": "claude-2", "task": MEMBER_TASK,
-                    "branch": "agents/claude-2", "worktree": member_worktree,
-                    "state": "active", "tier": "normal"}
-            }
-        });
-        let mut create = Command::new(&bus_binary)
-            .arg("team-create")
-            .arg("--dir")
-            .arg(home.root().join("bus"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        {
-            use std::io::Write;
-            create
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(bus_team.to_string().as_bytes())
-                .unwrap();
-        }
-        let created = create.wait_with_output().unwrap();
-        assert!(created.status.success(), "{}", text(created.stderr));
+        create_swap_bus_team(&home, &bus_binary, TEAM_ID, &coord_id, &member_id);
 
         let daemon = start_daemon(&home);
         eventually("coordinator task to run", || {

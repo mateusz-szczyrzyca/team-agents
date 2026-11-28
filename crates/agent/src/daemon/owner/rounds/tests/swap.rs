@@ -592,7 +592,7 @@ async fn team_member_swaps_in_its_original_checkout() {
         .lines()
         .map(|line| line.split_whitespace().nth(2).unwrap())
         .collect();
-    assert!(!branches.is_empty());
+    assert_ne!(branches, Vec::<&str>::new());
     assert!(branches.iter().all(|branch| *branch == branches[0]));
     assert!(branches[0].starts_with("agents/claude-1/"), "{branches:?}");
     rig.stop().await.unwrap();

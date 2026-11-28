@@ -156,7 +156,7 @@ async fn refusal_is_printed_exit_1() {
     let (code, out, err) = command(&dir).await;
     assert_eq!(code, std::process::ExitCode::from(1));
     assert_eq!(err, format!("agent: {} is done: nothing to swap\n", task(1)));
-    assert!(out.is_empty());
+    assert_eq!(out, "");
 }
 
 #[tokio::test]
@@ -169,5 +169,5 @@ async fn older_daemon_says_restart() {
         err,
         "agent: the daemon does not know swap; restart it with this version\n"
     );
-    assert!(out.is_empty());
+    assert_eq!(out, "");
 }
