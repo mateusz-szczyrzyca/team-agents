@@ -1377,7 +1377,7 @@ pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
     render_round_with_accounts(detail, zone, &BTreeMap::new())
 }
 
-/// [`render_round_in`] with the account each agent runs with: an agent that has one is followed by it in brackets.
+/// `render_round_in` with the account each agent runs with: an agent that has one is followed by it in brackets.
 pub(crate) fn render_round_with_accounts(detail: &RoundDetail, zone: Zone, accounts: &members::Accounts) -> String {
     let waiting = detail.waiting.as_deref().map_or_else(String::new, |waiting| {
         format!(", waits for {}", zone.stamp_waiting(waiting))
