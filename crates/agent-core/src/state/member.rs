@@ -19,8 +19,8 @@ use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
 /// Keeps the persisted member shape unchanged until a human hand-over occurs.
-fn no_human_handovers(count: &usize) -> bool {
-    *count == 0
+fn no_human_handovers<T: Default + PartialEq>(count: &T) -> bool {
+    *count == T::default()
 }
 
 /// Who works in a task: a normal agent, a worker or an investigator, by the tier of the configuration they are in.
