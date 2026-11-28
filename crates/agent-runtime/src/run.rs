@@ -12,6 +12,7 @@ pub mod context;
 mod hold;
 mod launch;
 pub mod outcome;
+mod readings;
 pub mod serena;
 pub use launch::check_environment;
 mod output;
@@ -31,6 +32,7 @@ use agent_core::decide::outcome::{
 use agent_core::history::{Launch, Record, RunChanges, StepKind};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
+use agent_core::limit_reading::LimitReading;
 use agent_core::prompt::VariablesError;
 use agent_core::serena::{RemindAfter, SessionTally};
 use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
@@ -51,6 +53,7 @@ use crate::run::serena::{SessionWatch, Watched as WatchStep};
 use crate::store::StateStore;
 pub use hold::{HoldGuard, WatchdogHold};
 pub use launch::{agent_path_directories, keep_out_of_git};
+pub use readings::RunReadings;
 
 /// One best-effort history boundary may spend two seconds collecting Git data, plus bounded child cleanup.
 const HISTORY_CAPTURE_BUDGET: Duration = Duration::from_secs(2);
@@ -400,6 +403,8 @@ pub struct RunEngine {
     /// The reminders that came due while runs went on and that the daemon has not taken yet, oldest first. A reminder is
     /// put on the bus while its run goes on, so it is handed over at once, in memory, and not read back from the history.
     due_reminders: Arc<Mutex<Vec<DueReminder>>>,
+    /// The readings of rate-limit windows that ended runs showed and the daemon has not taken yet, oldest first.
+    shown_readings: Arc<Mutex<Vec<RunReadings>>>,
 }
 
 impl RunEngine {
@@ -411,7 +416,20 @@ impl RunEngine {
             history: History::disabled(),
             serena_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             due_reminders: Arc::new(Mutex::new(Vec::new())),
+            shown_readings: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// The readings of rate-limit windows that the runs ended since the last call showed, oldest first, each once.
+    #[must_use]
+    pub fn take_readings(&self) -> Vec<RunReadings> {
+        // A poisoned lock still holds consistent data: the list is only ever appended to and emptied whole.
+        std::mem::take(
+            &mut *self
+                .shown_readings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 
     /// The reminders that came due since the last call, oldest first, each once: the run of each is going on, and the
@@ -616,6 +634,7 @@ impl RunEngine {
         };
         let stopped_by = self.supervise(&job, process, &mut follow, cancel, hold).await?;
         follow.drain().await?;
+        self.keep_shown_readings(&job, &follow.parser.readings())?;
         self.record_process_end(&job, head_before, follow.parser.usage()).await;
         let stderr = read_end(&stderr).await?;
         follow.unreadable.report(&job);
@@ -654,6 +673,23 @@ impl RunEngine {
             progress: follow.progress,
             used_tool: follow.used_tool,
         })))
+    }
+
+    /// Hands the daemon the `readings` the run of `job` showed, when it showed any, with the time it ended.
+    fn keep_shown_readings(&self, job: &RunJob, readings: &[LimitReading]) -> Result<(), RunError> {
+        if readings.is_empty() {
+            return Ok(());
+        }
+        let read_at = Timestamp::now(&self.parts.clock)?;
+        self.shown_readings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(RunReadings {
+                task: job.task.clone(),
+                read_at,
+                readings: readings.to_vec(),
+            });
+        Ok(())
     }
 
     /// Waits for the run of `job` to end — it goes silent, is cancelled, or exits — feeding its output to `follow`,
