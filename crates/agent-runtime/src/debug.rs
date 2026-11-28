@@ -540,6 +540,7 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
             collection.add("agents.toml", text.clone().into_bytes());
             let redacted = collection.cut.redact_text(&text);
             collection.summary.configuration = Some(redacted);
+            observe_accounts(collection, &text, secrets);
         }
         Err(error) => {
             collection
@@ -551,6 +552,22 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
                     reason: crate::process::error_chain(&error),
                 });
         }
+    }
+}
+
+/// Records the accounts of the configuration in `text` with the names of their variables; a configuration that does not
+/// load is recorded as an unreadable part, since the accounts cannot be told from it.
+fn observe_accounts(collection: &mut collect::Collection, text: &str, secrets: &agent_core::config::Secrets) {
+    match agent_core::config::Config::from_toml_str(text) {
+        Ok(config) => collection.accounts = agent_core::account_view::account_views(&config, secrets),
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::Accounts,
+                part: "accounts".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
     }
 }
 

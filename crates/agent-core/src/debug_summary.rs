@@ -896,6 +896,30 @@ fn render_notifications(notifications: &[String], out: &mut SummaryWriter) {
     write_line(out, "");
 }
 
+/// The accounts with their owner, agents and the names of their variables; never a value.
+fn render_accounts(accounts: &[AccountView], out: &mut SummaryWriter) {
+    if accounts.is_empty() {
+        write_line(out, "No accounts are configured.");
+        return;
+    }
+    let names = |names: Vec<String>| {
+        if names.is_empty() {
+            "none".to_owned()
+        } else {
+            names.join(", ")
+        }
+    };
+    for account in accounts {
+        write_line(out, &format!("- `{}` (owner `{}`)", account.name, account.owner));
+        let agents = names(account.agents.iter().map(ToString::to_string).collect());
+        write_line(out, &format!("  - Agents: {agents}"));
+        let env = names(account.env.iter().map(ToString::to_string).collect());
+        write_line(out, &format!("  - Environment variables: {env}"));
+        let secrets = names(account.secrets.iter().map(ToString::to_string).collect());
+        write_line(out, &format!("  - Secret variables: {secrets}"));
+    }
+}
+
 fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary], out: &mut SummaryWriter) {
     if let Some(avg) = machine.load_avg {
         write_line(
@@ -1080,9 +1104,7 @@ fn render_with_redaction(
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
             SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
             SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
-            SummarySection::Accounts => {
-                let _ = accounts;
-            }
+            SummarySection::Accounts => render_accounts(accounts, &mut out),
             SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
             SummarySection::CollectionFailures => render_unreadable(&input.unreadable_parts, &mut out),
         }
