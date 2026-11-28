@@ -225,6 +225,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::CheckpointFailed, "checkpoint_failed", LogLevel::Warn),
         (LogEvent::FindingsShown, "findings_shown", LogLevel::Info),
         (LogEvent::FindingsUnavailable, "findings_unavailable", LogLevel::Warn),
+        (LogEvent::ShiftNoFreeAgent, "shift_no_free_agent", LogLevel::Info),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());
@@ -482,3 +483,10 @@ fn investigation_failures_have_stable_info_events() {
         assert_eq!(event.map(|event| event.level()), Some(LogLevel::Info), "{name}");
     }
 }
+
+#[test]
+fn shift_no_free_agent_has_stable_info_event() {
+    assert_eq!(LogEvent::ShiftNoFreeAgent.as_str(), "shift_no_free_agent");
+    assert_eq!(LogEvent::ShiftNoFreeAgent.level(), LogLevel::Info);
+}
+

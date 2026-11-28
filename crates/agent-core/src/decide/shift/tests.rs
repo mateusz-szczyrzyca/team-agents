@@ -304,3 +304,15 @@ fn ended_run_pr_does_not_authorize_a_new_assigned_round_without_pr() {
     .unwrap();
     assert_eq!(check(&state, 1, 120, 7200), ShiftCheck::NotDue);
 }
+
+#[test]
+fn format_span_formats_hours_and_minutes_correctly() {
+    use super::format_span;
+
+    assert_eq!(format_span(0), "0m");
+    assert_eq!(format_span(45), "45m");
+    assert_eq!(format_span(60), "1h");
+    assert_eq!(format_span(100), "1h40m");
+    assert_eq!(format_span(120), "2h");
+    assert_eq!(format_span(150), "2h30m");
+}

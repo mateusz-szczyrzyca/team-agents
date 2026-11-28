@@ -217,6 +217,10 @@ impl Activity {
             (Some(config), Some((state, _))) => accounts::waits(config, state, teams),
             (None, _) | (_, None) => BTreeMap::new(),
         };
+        let shifts = match (&config, &state) {
+            (Some(config), Some((state, now))) => shifts(config, state, *now, teams),
+            (None, _) | (_, None) => BTreeMap::new(),
+        };
         let (cli_runs, accounts) = config.map_or_else(
             || (None, BTreeMap::new()),
             |config| {
@@ -231,6 +235,7 @@ impl Activity {
             accounts,
             provider_lines,
             account_waits,
+            shifts,
         })
     }
 
@@ -497,6 +502,7 @@ async fn listing_text(
                 accounts: &reads.accounts,
             },
             waits: &|task| reads.account_waits.get(task).cloned(),
+            shifts: &|task| reads.shifts.get(task).cloned(),
         },
         activity.zone,
     );
@@ -576,6 +582,7 @@ async fn running_text(
                     accounts: &reads.accounts,
                 },
                 waits: &|task| reads.account_waits.get(task).cloned(),
+                shifts: &|task| reads.shifts.get(task).cloned(),
             },
             activity.zone,
         );
@@ -1039,6 +1046,7 @@ fn render_in(
             accounts: &BTreeMap::new(),
         },
         waits: &|_| None,
+        shifts: &|_| None,
     };
     render_with_notes(teams, view, detail, activity, rounds, notes, zone)
 }
@@ -1110,6 +1118,7 @@ fn render_with_waits(
             accounts: &BTreeMap::new(),
         },
         waits: waiting.accounts,
+        shifts: &|_| None,
     };
     render_with_notes(teams, view, detail, activity, rounds, notes, zone)
 }
@@ -1129,6 +1138,7 @@ fn render_with_accounts(
     let notes = Notes {
         extras,
         waits: &|_| None,
+        shifts: &|_| None,
     };
     render_with_notes(teams, view, detail, activity, rounds, notes, zone)
 }
@@ -1141,6 +1151,8 @@ struct Notes<'a> {
     extras: Extras<'a>,
     /// What a queued task says of the account it waits for, such as `waiting for account comp-claude (1/1 runs)`.
     waits: &'a dyn Fn(&TaskId) -> Option<String>,
+    /// What a lead task says of its shift time worked, such as `shift: 1h40m of 2h worked`.
+    shifts: &'a dyn Fn(&TaskId) -> Option<String>,
 }
 
 /// The teams as text, with every note of `notes`.
@@ -1156,6 +1168,7 @@ fn render_with_notes(
     let Notes {
         extras: Extras { under, accounts },
         waits,
+        shifts,
     } = notes;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
@@ -1221,14 +1234,14 @@ fn render_with_notes(
                 team.members
                     .iter()
                     .filter(|member| members::listed(member))
-                    .map(|member| members::line(member, team, columns, accounts, activity, waits, zone)),
+                    .map(|member| members::line(member, team, columns, accounts, activity, waits, shifts, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(member, team, columns, accounts, activity, waits, zone));
+            lines.push(members::line(member, team, columns, accounts, activity, waits, shifts, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -1258,6 +1271,39 @@ pub(crate) struct Reads {
     provider_lines: Option<String>,
     /// What each queued task whose account has its `max_runs` going says of it, by task.
     account_waits: BTreeMap<TaskId, String>,
+    /// What each lead task with shifts says of its worked time, by task.
+    shifts: BTreeMap<TaskId, String>,
+}
+
+/// What each lead task with shifts says of its worked time, by task.
+pub(crate) fn shifts(
+    config: &agent_core::config::Config,
+    state: &agent_core::state::State,
+    now: Timestamp,
+    teams: &[TeamSummary],
+) -> BTreeMap<TaskId, String> {
+    let limit_minutes = u64::from(config.limits().lead_shift_minutes);
+    if limit_minutes == 0 {
+        return BTreeMap::new();
+    }
+    teams
+        .iter()
+        .flat_map(|team| &team.members)
+        .filter(|member| matches!(member.role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Coordinator))
+        .filter_map(|member| {
+            let found = state.find_task(&member.task)?;
+            let worked_secs = agent_core::decide::shift::worked_secs(&found.member, now);
+            let worked_minutes = worked_secs / 60;
+            Some((
+                member.task.clone(),
+                format!(
+                    "shift: {} of {} worked",
+                    agent_core::decide::shift::format_span(worked_minutes),
+                    agent_core::decide::shift::format_span(limit_minutes)
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// The lines of the accounts that are paused at `now`, the line of the agents their provider refused and the lines of
@@ -1632,3 +1678,7 @@ mod account_status_tests;
 #[cfg(test)]
 #[path = "status/tests/reading_status.rs"]
 mod reading_status_tests;
+
+#[cfg(test)]
+#[path = "status/tests/shift.rs"]
+mod shift_status_tests;

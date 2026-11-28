@@ -934,6 +934,11 @@ impl Member {
         });
     }
 
+    /// Excludes a human-selected hand-over from the harness replacement allowance.
+    pub(crate) fn record_human_handover(&mut self) {
+        self.human_handovers = self.human_handovers.saturating_add(1);
+    }
+
     /// Records that a run has started.
     ///
     /// # Errors

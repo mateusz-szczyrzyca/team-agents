@@ -53,6 +53,7 @@ mod round_limit;
 mod round_state;
 mod rounds;
 mod session_account;
+mod shift;
 #[cfg(test)]
 mod shutdown_tests;
 mod snapshots;
@@ -704,6 +705,10 @@ pub(super) struct Owner {
     gate_answers: JoinSet<()>,
     /// The task that owns each outstanding gate answer.
     gate_answer_tasks: HashMap<JoinId, TaskId>,
+    /// When the daemon started waiting for a running gate of a task to finish before shifting.
+    gate_wait_since: HashMap<TaskId, Timestamp>,
+    /// Lead tasks for which shift_no_free_agent was logged during the current shift waiting period.
+    shift_no_free_logged: HashSet<TaskId>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,
     /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
@@ -839,6 +844,8 @@ impl Owner {
             gate_stops: HashMap::new(),
             gate_answers: JoinSet::new(),
             gate_answer_tasks: HashMap::new(),
+            gate_wait_since: HashMap::new(),
+            shift_no_free_logged: HashSet::new(),
             gate: None,
             pulls: None,
             github: HashMap::new(),
@@ -931,6 +938,7 @@ impl Owner {
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
+                    self.check_lead_shifts().await?;
                 }
             }
         }

@@ -502,4 +502,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 37,
         sql: include_str!("037-findings.sql"),
     },
+    Migration {
+        version: 38,
+        sql: include_str!("038-shift-no-free-agent.sql"),
+    },
 ];

@@ -76,6 +76,7 @@ pub(super) fn line(
     accounts: &Accounts,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     waits: &dyn Fn(&TaskId) -> Option<String>,
+    shifts: &dyn Fn(&TaskId) -> Option<String>,
     zone: Zone,
 ) -> String {
     let waiting = member.open_question.map_or_else(String::new, |number| {
@@ -93,6 +94,7 @@ pub(super) fn line(
         .held_by
         .as_ref()
         .map_or_else(String::new, |held| format!(", for {held}"));
+    let shift = shifts(&member.task).map_or_else(String::new, |said| format!(", {said}"));
     // Only a task that runs is active now: what a task that waits last did is in its log.
     let active = (member.status == TaskStatus::Running)
         .then(|| activity(&member.task))
@@ -113,7 +115,7 @@ pub(super) fn line(
     });
     let (role_width, agent_width) = (columns.role, columns.agent);
     format!(
-        "  {}  {:<role_width$}  {:<agent_width$}  {status}{account_wait}{failed}{blocked}{renewed}{taken_over}{returned}{active}{waiting}",
+        "  {}  {:<role_width$}  {:<agent_width$}  {status}{account_wait}{failed}{blocked}{renewed}{taken_over}{returned}{shift}{active}{waiting}",
         member.task,
         member.role.to_string(),
         label(member, accounts),
