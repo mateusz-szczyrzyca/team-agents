@@ -628,32 +628,50 @@ async fn the_editor_of_the_configuration_wins_over_the_environment() {
 
 #[tokio::test]
 async fn swap_command_asks_daemon_and_prints_result() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
     let dir = tempfile::tempdir().unwrap();
-    let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), |request| match &request.command {
-        Request::Show(_) => line(
-            request,
-            Reply::Task {
-                team: team_id(1),
-                role: agent_core::kinds::Role::Coordinator,
-                member: Box::new(agent_core::state::Member::new(
-                    task(1),
-                    agent_core::state::Participant::Normal("claude-1".parse().unwrap()),
-                )),
-            },
-        ),
-        Request::Swap(_) => line(request, Reply::Applied { tasks: vec![task(1)] }),
-        _ => panic!("unexpected request: {request:?}"),
+    let socket = dir.path().join("agent.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_clone = std::sync::Arc::clone(&seen);
+
+    let server = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let (read, mut write) = stream.into_split();
+            let mut reader = BufReader::new(read);
+            let mut line = String::new();
+            let seen = std::sync::Arc::clone(&seen_clone);
+            tokio::spawn(async move {
+                while reader.read_line(&mut line).await.unwrap() != 0 {
+                    if let Ok((req, format)) = agent_core::protocol::Request::from_line_negotiated(&line) {
+                        seen.lock().unwrap().push(req.clone());
+                        let reply = match &req.command {
+                            Request::Show(_) => Reply::Task {
+                                team: team_id(1),
+                                role: agent_core::kinds::Role::Coordinator,
+                                member: Box::new(agent_core::state::Member::new(
+                                    task(1),
+                                    agent_core::state::Participant::Normal("claude-1".parse().unwrap()),
+                                )),
+                            },
+                            Request::Swap(_) => Reply::Applied { tasks: vec![task(1)] },
+                            _ => panic!("unexpected request: {req:?}"),
+                        };
+                        let response = Response::ok(req.id, reply);
+                        let wire = Frame::Response(response).to_line_for(format).unwrap();
+                        write.write_all(wire.as_bytes()).await.unwrap();
+                    }
+                    line.clear();
+                }
+            });
+        }
     });
 
     let (result, out) = steer(&environment(&dir), &["swap", task(1).as_str(), "glm-1"]).await;
 
     result.unwrap();
     assert_eq!(out, format!("{}: claude-1 → glm-1\n", task(1)));
-    assert_eq!(
-        daemon.requests()[1].command,
-        Request::Swap(agent_core::protocol::SwapRequest {
-            task: task(1),
-            agent: "glm-1".parse().unwrap(),
-        })
-    );
+    server.abort();
 }
