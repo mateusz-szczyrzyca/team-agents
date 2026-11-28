@@ -906,7 +906,8 @@ A run that starts or ends between the status request and the swap can make that 
 may be ended without the marker appearing.
 
 The hand-over is written to the state (the new holder, the one before it, and the reason `swap` of the new session), to
-the history (the decision `swap`) and to the log (`task_handed_over` with `reason = "swap"`). The command prints the
+the history (the decision `swap`) and to the log (`task_handed_over` with `reason = "swap"`). When a run is ended,
+its last control step and the history name the CLI or dashboard client that stopped it. The command prints the
 task and the two agents, `task-20261125-075745-w8vj: claude-1 → glm-1`, with `(run stopped)` after it when it ended a
 run that was going on.
 

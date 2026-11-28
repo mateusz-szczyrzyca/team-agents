@@ -16,6 +16,8 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Bug fixes
 - [agent] [agent-core] Human swaps preserve the automatic replacement allowance while retaining every past holder.
+- [agent] A run ended by a swap records the human who stopped it in its steps and history.
+- [agent-core] An inconsistent state whose human swap count exceeds its holder history is refused.
 
 ## agent 0.153.0 · agent-core 0.153.0 — 28.11.2026 — PR #372
 

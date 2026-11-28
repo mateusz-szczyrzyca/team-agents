@@ -1,9 +1,11 @@
 //! `Owner::swap_request`: changes the agent holding a task on the human's word.
 
+use agent_core::cli::ActivityEvent;
 use agent_core::decide::ladder::Trouble;
+use agent_core::history::HistoryEvent;
 use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
-use agent_core::protocol::{Client, Failure, FailureKind, Reply, SwapRefusal, SwapRequest};
+use agent_core::protocol::{Client, ControlAction, Failure, FailureKind, Reply, SwapRefusal, SwapRequest, Target};
 use agent_core::state::{Choice, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
@@ -123,7 +125,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or the task is lost.
     pub(super) async fn swap_request(
         &mut self,
-        _client: &Client,
+        client: &Client,
         request: SwapRequest,
     ) -> Result<Result<Reply, Failure>, OwnerError> {
         let team_id = match self.check_swap_refusal(&request) {
@@ -145,6 +147,27 @@ impl Owner {
             || found.member.current_run().is_some();
 
         if was_running {
+            let at = Timestamp::now(&self.parts.clock)?;
+            // Keep the human's halt in the old run before settlement removes its current-run pointer.
+            self.record_control_step(
+                &request.task,
+                at,
+                &ActivityEvent::Control {
+                    action: ControlAction::Stop,
+                    by: client.clone(),
+                },
+            );
+            self.record_event_at(
+                at,
+                &team_id,
+                self.rounds_of_tasks(std::slice::from_ref(&request.task)),
+                HistoryEvent::Controlled {
+                    action: ControlAction::Stop,
+                    target: Target::Task(request.task.clone()),
+                    by: client.clone(),
+                    tasks: vec![request.task.clone()],
+                },
+            );
             self.halt(&request.task, Halt::Stop);
             self.settle_halted(std::slice::from_ref(&request.task)).await?;
         }
