@@ -530,3 +530,70 @@ async fn swap_is_recorded() {
 
     rig.stop().await.unwrap();
 }
+
+// A team member keeps its task and checkout when a human changes its holder.
+#[tokio::test]
+async fn team_member_swaps_in_its_original_checkout() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate"),
+            normal("claude-1", "hold"),
+            normal("glm-1", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let target = tasks[1].clone();
+    rig.prompt(&target, 1).await;
+    let original = rig.worktree(&target);
+    let reply = ask(
+        &rig,
+        Command::Swap(SwapRequest {
+            task: target.clone(),
+            agent: "glm-1".parse().unwrap(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reply,
+        Reply::Applied {
+            tasks: vec![target.clone()]
+        }
+    );
+    let prompt = rig.prompt(&target, 2).await;
+    assert!(
+        prompt.starts_with("# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("`swap`:"), "{prompt}");
+    assert!(prompt.contains("You are agent **glm-1**"), "{prompt}");
+    let state = rig
+        .state_where("replacement completed its run", |state| {
+            let member = state.find_task(&target).unwrap().member;
+            member.agent().name() == "glm-1" && member.status() != TaskStatus::Running
+        })
+        .await;
+    let member = state.find_task(&target).unwrap().member;
+    assert_eq!(member.agent().tier(), agent_core::kinds::Tier::Normal);
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
+    assert!(member.current_run().is_none());
+    assert_eq!(rig.worktree(&target), original);
+    let log = std::fs::read_to_string(original.join(".fake-log")).unwrap();
+    let branches: Vec<_> = log
+        .lines()
+        .map(|line| line.split_whitespace().nth(2).unwrap())
+        .collect();
+    assert!(!branches.is_empty());
+    assert!(branches.iter().all(|branch| *branch == branches[0]));
+    assert!(branches[0].starts_with("agents/claude-1/"), "{branches:?}");
+    rig.stop().await.unwrap();
+}
