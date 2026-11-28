@@ -871,6 +871,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::WorkerRequestReturned,
             LogEvent::WorkerRequestRequeued,
             LogEvent::RunNoToolRetry,
+            LogEvent::ShiftNoFreeAgent,
             LogEvent::TeamChanged,
             LogEvent::RoundChanged,
             LogEvent::ItemPhaseChanged,
@@ -1471,6 +1472,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
     super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
     record_worker_request_recovery(&mut observed).await;
+    record_shift_no_free_agent(&mut observed).await;
     super::removal_tests::record_team_removed(&mut observed).await;
     super::serena_reminder_tests::record_serena_reminded(&mut observed).await;
     crate::daemon::owner::commit_reminder::tests::record_commit_events(&mut observed).await;
@@ -1576,4 +1578,84 @@ async fn record_worker_request_recovery(observed: &mut BTreeSet<LogEvent>) {
         }
         observed.insert(event);
     }
+}
+
+/// Exercises the blocked shift twice so exhaustive coverage also pins duplicate suppression.
+async fn record_shift_no_free_agent(observed: &mut BTreeSet<LogEvent>) {
+    let mut state = solo_state();
+    let mut team = state.team_mut(&team_id(0)).unwrap();
+    let round: RoundId = "round-20261115-090000-shft".parse().unwrap();
+    let item = "1.1".parse().unwrap();
+    team.open_round(round.clone(), Some(item), at(0)).unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::InProgress {
+            assignee: "claude-1".parse().unwrap(),
+            branch: "agents/codex-1/item-1-2".parse().unwrap(),
+        },
+    )
+    .unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::InReview {
+            pr: crate::fixtures::pr(1),
+            reviews: Vec::new(),
+        },
+    )
+    .unwrap();
+    team.begin_run(
+        &task(1),
+        agent_core::state::NewRun {
+            id: crate::fixtures::run(1),
+            at: at(0),
+            session: None,
+            rounds: vec![round],
+        },
+    )
+    .unwrap();
+    let daemon = Daemon::new(&state, None);
+    let mut config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    config.push_str("\n[limits]\nlead_shift_minutes = 120\n");
+    std::fs::write(daemon.home.config_file(), config).unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::minutes(120));
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+    async {
+        owner.check_lead_shifts().await.unwrap();
+        owner.check_lead_shifts().await.unwrap();
+    }
+    .with_subscriber(dispatch)
+    .await;
+    started.writer.close().unwrap();
+    let rows = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    let selected: Vec<_> = rows
+        .iter()
+        .filter(|row| row.event() == LogEvent::ShiftNoFreeAgent)
+        .collect();
+    assert_eq!(selected.len(), 1, "the second blocked shift check must not log again");
+    let row = selected[0];
+    assert_eq!(row.level(), LogLevel::Info);
+    assert_eq!(row.task(), Some(&task(1)));
+    assert_eq!(row.team(), None);
+    assert_eq!(row.run(), None);
+    assert_eq!(row.rounds(), []);
+    assert_eq!(row.fields().get("holder"), Some(&json!("claude-1")));
+    assert_eq!(row.fields().get("worked_minutes"), Some(&json!(120)));
+    observed.insert(LogEvent::ShiftNoFreeAgent);
 }
