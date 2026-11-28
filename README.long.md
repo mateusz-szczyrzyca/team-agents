@@ -267,6 +267,8 @@ While an account is paused, **no agent of it is picked**: not an investigator fo
 replacement for a task that waits or whose agent is changed, not a worker for a request. They are chosen among the agents
 of accounts that are not paused and agents without an account; when every agent that could be picked is of a paused
 account, the review, the hand-over or the request waits in the queue, not failed, and goes on at the reset.
+The same holds for `[replacement] mode = "lead"` (and `auto` with no agent listed): a member's work whose ladder is
+exhausted is not given to a lead of a paused account; the member's task is paused until the reset and goes on then.
 
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 

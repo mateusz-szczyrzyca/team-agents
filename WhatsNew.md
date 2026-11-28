@@ -15,7 +15,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 - [agent] [agent-core] While an account is paused, none of its agents is picked: not an investigator for a review or an investigation, not a replacement for a waiting task, not a worker for a request. Another account of the same owner and agents without an account are picked as before; when only agents of a paused account could be picked, the work waits in the queue, not failed, until the reset.
 
 ### Bug fixes
-- [agent] A request kept by a restart of the daemon was given again to a worker of a paused account, and a worker's recount of runs could lift its exclusion within one pass; both now keep it out. A team's workers of a paused account take no request, on the first or the second try, a task refused by its provider is not handed to an agent or investigator of a paused account, and the lead of a paused account is not given a member's work.
+- [agent] A request kept by a restart of the daemon was given again to a worker of a paused account, and a worker's recount of runs could lift its exclusion within one pass; both now keep it out. A team's workers of a paused account take no request, on the first or the second try, a task refused by its provider is not handed to an agent or investigator of a paused account, and the lead of a paused account is not given a member's work: when the lead is the only one left to take it, the member's task is paused until the reset and carries on then, not failed.
 
 ## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
 
