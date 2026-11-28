@@ -45,6 +45,7 @@ mod shutdown_tests;
 mod snapshots;
 mod split;
 mod start;
+mod swap;
 mod takeover;
 mod teams;
 mod test_lock;
@@ -3192,6 +3193,7 @@ impl Owner {
                         Command::Renew(request) => self.renew_request(&client, request).await?,
                         Command::Say(request) => self.say_request(&client, request).await?,
                         Command::Remove(request) => self.remove_reply(&client, request).await?,
+                        Command::Swap(request) => self.swap_request(&client, request).await?,
                         other => self.answer(&other),
                     };
                     if let Err(ref failure) = answer {
