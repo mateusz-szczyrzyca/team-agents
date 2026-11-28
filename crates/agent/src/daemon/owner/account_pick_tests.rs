@@ -302,9 +302,7 @@ async fn a_task_held_for_its_own_account_is_woken_at_its_own_reset_after_a_resta
         .replace(member, &format!("{member}account = \"claude-own\"\n"));
     std::fs::write(
         &path,
-        format!(
-            "{text}\n[accounts.claude-paused]\nowner = \"claude\"\n[accounts.claude-own]\nowner = \"claude\"\n"
-        ),
+        format!("{text}\n[accounts.claude-paused]\nowner = \"claude\"\n[accounts.claude-own]\nowner = \"claude\"\n"),
     )
     .unwrap();
     let (mut owner, _sinks) = daemon.bare_owner().await;
