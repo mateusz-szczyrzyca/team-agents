@@ -926,6 +926,10 @@ mod briefing_review_tests;
 mod takeover_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/swap.rs"]
+mod swap_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/last_step.rs"]
 mod last_step_tests;
 

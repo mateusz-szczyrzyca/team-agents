@@ -46,6 +46,7 @@ mod shutdown_tests;
 mod snapshots;
 mod split;
 mod start;
+mod swap;
 mod takeover;
 mod teams;
 mod test_lock;
@@ -2673,7 +2674,14 @@ impl Owner {
         let held = self
             .participant_of(refused_agent)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        self.hand_task_over(task, new_agent, &held, Trouble::NoStatus, now)?;
+        self.hand_task_over(
+            task,
+            new_agent,
+            &held,
+            agent_core::state::Choice::Harness,
+            Trouble::NoStatus,
+            now,
+        )?;
         log_decision(
             "takeover",
             &format!("task={task}, from={}", held.name()),
@@ -3197,6 +3205,7 @@ impl Owner {
                         Command::Renew(request) => self.renew_request(&client, request).await?,
                         Command::Say(request) => self.say_request(&client, request).await?,
                         Command::Remove(request) => self.remove_reply(&client, request).await?,
+                        Command::Swap(request) => self.swap_request(&client, request).await?,
                         other => self.answer(&other),
                     };
                     if let Err(ref failure) = answer {
