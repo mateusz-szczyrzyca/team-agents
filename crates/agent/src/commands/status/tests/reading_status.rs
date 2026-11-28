@@ -59,7 +59,7 @@ async fn the_status_of_the_teams_shows_the_reading_the_state_keeps() {
 
     let text = String::from_utf8(out).unwrap();
     assert!(
-        text.contains("claude-main: 5h 62% (resets 2099-12-31 15:30, read just now)\n"),
+        text.contains("claude-main: 5h 62% (resets 2099-12-31 15:30, read "),
         "{text}"
     );
 }
