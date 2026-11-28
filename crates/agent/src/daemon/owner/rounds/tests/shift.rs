@@ -222,7 +222,12 @@ async fn shift_waits_for_the_gate() {
             .await
     });
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    rig.wait_for("the gate to be accepted by the gate service", || {
+        rig.home
+            .gate_log(&tasks[0], std::num::NonZeroU32::MIN)
+            .is_file()
+    })
+    .await;
 
     rig.advance_history_days(1);
 
