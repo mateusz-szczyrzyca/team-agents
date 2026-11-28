@@ -9,6 +9,15 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.157.0 · agent-core 0.157.0 — 28.11.2026 — PR #378
+
+### New features
+- [agent] [agent-core] An account can be held before its limit is reached: with `hold_at = 0.9` in `[accounts.NAME]`, no new run of the account starts once a window is 90% used, until that window resets. Running runs finish, queued tasks wait and nothing fails, and no investigator of the account is picked for a review or a request meanwhile. You get one notification, `Account comp-claude is held until 15:30`. The hold lasts until the window resets even if a lower reading follows, and a restart of the daemon keeps it.
+- [agent] The log says `account_held` when a hold begins and `account_released` when it ends.
+
+### Configuration
+- [agent-core] new: `[accounts.NAME] hold_at` (no default: no hold) — a number from 0 to 1, the share of a limit window from which no new run of the account starts until the window resets; a value outside 0 to 1 is refused, naming the account.
+
 ## agent 0.156.0 · agent-core 0.156.0 — 28.11.2026 — PR #376
 
 ### Enhancements

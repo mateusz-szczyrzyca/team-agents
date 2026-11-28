@@ -44,6 +44,8 @@ mod account_wait_tests;
 #[cfg(test)]
 mod commit_cut_tests;
 #[cfg(test)]
+mod held_account_tests;
+#[cfg(test)]
 mod human_session_tests;
 #[cfg(test)]
 mod limit_tests;
@@ -146,6 +148,13 @@ struct SessionAccounts {
     by_task: BTreeMap<TaskId, crate::config::AccountName>,
 }
 
+/// The ends of the recorded holds of accounts, kept behind a box for the reason of [`SessionAccounts`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AccountHolds {
+    /// Until when each held account takes no new run; see [`State::account_hold_until`].
+    until: BTreeMap<crate::config::AccountName, Timestamp>,
+}
+
 /// When the held tasks that wait for another account are woken, kept behind a box for the reason of
 /// [`SessionAccounts`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -190,6 +199,9 @@ pub struct State {
     /// The newest reading of each rate-limit window of each account, and of each agent without an account; kept behind a
     /// box for the reason of [`SessionAccounts`].
     limit_readings: Box<LimitReadings>,
+    /// Until when each held account takes no new run: written when its hold begins, so that a later reading below
+    /// `hold_at` does not end it before its window resets; an account without an entry has no recorded hold.
+    account_holds: Box<AccountHolds>,
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -235,6 +247,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no reading is kept.
     #[serde(skip_serializing_if = "LimitReadings::is_empty")]
     limit_readings: &'a LimitReadings,
+    /// See [`State`]; omitted when no hold is recorded.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    account_holds: &'a BTreeMap<crate::config::AccountName, Timestamp>,
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -264,6 +279,7 @@ impl Serialize for State {
             account_held_tasks: &self.account_held,
             account_waits: &self.account_waits.by_task,
             limit_readings: &self.limit_readings,
+            account_holds: &self.account_holds.until,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
         }
@@ -284,6 +300,7 @@ impl PartialEq for State {
             && self.account_held == other.account_held
             && self.account_waits == other.account_waits
             && self.limit_readings == other.limit_readings
+            && self.account_holds == other.account_holds
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
@@ -328,6 +345,9 @@ struct StateWire {
     /// Optional in state written before the readings of rate-limit windows were persisted.
     #[serde(default)]
     limit_readings: LimitReadings,
+    /// Optional in state written before the holds of accounts were recorded.
+    #[serde(default)]
+    account_holds: BTreeMap<crate::config::AccountName, Timestamp>,
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -524,6 +544,32 @@ impl State {
         self.accounts.iter()
     }
 
+    /// The end of the hold of `account`, `None` when the account is not held by a recorded hold.
+    #[must_use]
+    pub fn account_hold_until(&self, account: &crate::config::AccountName) -> Option<Timestamp> {
+        self.account_holds.until.get(account).copied()
+    }
+
+    /// Records that `account` is held until `until`, or forgets its hold with `None`.
+    pub fn record_account_hold(&mut self, account: crate::config::AccountName, until: Option<Timestamp>) {
+        match until {
+            Some(until) => {
+                self.account_holds.until.insert(account, until);
+            }
+            None => {
+                self.account_holds.until.remove(&account);
+            }
+        }
+    }
+
+    /// The recorded holds with their ends, in the order of the account names.
+    pub fn account_holds(&self) -> impl Iterator<Item = (&crate::config::AccountName, Timestamp)> {
+        self.account_holds
+            .until
+            .iter()
+            .map(|(account, until)| (account, *until))
+    }
+
     /// The newest readings of the rate-limit windows, per account and per agent without one.
     #[must_use]
     pub fn limit_readings(&self) -> &LimitReadings {
@@ -662,6 +708,7 @@ impl State {
             account_held: BTreeSet::new(),
             account_waits: Box::default(),
             limit_readings: Box::default(),
+            account_holds: Box::default(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
         }
@@ -1439,6 +1486,9 @@ impl TryFrom<StateWire> for State {
                 by_task: wire.account_waits,
             }),
             limit_readings: Box::new(wire.limit_readings),
+            account_holds: Box::new(AccountHolds {
+                until: wire.account_holds,
+            }),
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
         };

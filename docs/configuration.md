@@ -114,6 +114,7 @@ account = "comp-claude"
 | `owner` | lowercase letters and digits, starting with a letter, up to 32 bytes | required | whose account it is, such as `mateusz` or `comp`. An empty or missing owner, `Comp X` and `comp-x` are refused, naming the account |
 | `env` | table of variable names to texts | empty | variables of the environment that are not secret, such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; a value is 1 to 4096 bytes without control characters |
 | `max_runs` | whole number above 0 | no limit | the most runs the agents of the account have going at once, over all teams. `0` is refused, naming the account; leave the key out for no limit |
+| `hold_at` | number from 0 to 1 | no hold | from this share of a rate-limit window (`0.9` is 90%) no new run of the account starts until that window resets. A value outside 0 to 1 is refused, naming the account. Needs the readings the daemon keeps (Claude Code today); an account with no reading is never held |
 
 The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a letter, not ending with `-`.
 
@@ -130,7 +131,14 @@ The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a let
   over all teams. A queued task whose account has its `max_runs` going stays queued and starts when one of those runs
   ends; `agent status` says `queued, waiting for account comp-claude (1/1 runs)` after it. Agents without an account and
   accounts without `max_runs` have no such limit; `[limits]` still holds for each agent.
-- `hold_at` is an unknown key until the version that brings it.
+- **`hold_at` holds an account before its limit is reached.** When the newest reading of a window of the account is at or
+  above `hold_at`, no new run of its agents and investigators starts until that window resets: the runs going finish, the
+  queued tasks wait in the queue and start by themselves at the reset, nothing fails, and the harness picks no agent of
+  the account for a replacement, a review or a request. If both windows are at or above `hold_at`, the hold lasts until
+  both have reset. The human gets one notification when a hold begins. The daemon records the hold in the state when it
+  begins, so a later reading below `hold_at` does not end it before the reset, a restart of the daemon keeps it and does
+  not tell it again, and a hold that a reading already above a newly added `hold_at` begins when the daemon starts is told
+  once. Removing `hold_at` lets the account go. Other accounts, also of the same owner, are not held.
 - An agent without an account gets the environment it always got.
 - `agent status` writes the account in brackets after an agent that has one, and `agent debug` lists each account with
   its owner, its agents and the names — never the values — of its `env` and secret variables.

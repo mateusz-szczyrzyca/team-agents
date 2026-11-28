@@ -165,8 +165,8 @@ fn provider_cooling_down(
     }
 }
 
-/// The investigators of `config` that their provider refused at `now`, and those whose account is paused at `now`: they
-/// review nothing until their return or the reset of their account.
+/// The investigators of `config` that their provider refused at `now`, and those whose account is paused or held at
+/// `now`: they review nothing until their return or the reset of their account.
 #[must_use]
 pub fn refused_investigators(
     state: &crate::state::State,
@@ -175,10 +175,15 @@ pub fn refused_investigators(
 ) -> std::collections::HashSet<InvestigatorName> {
     let refused = state.refused_agents_at(now);
     let paused = crate::decide::account_candidates::investigators_of_paused_accounts(state, config, now);
+    let held = crate::decide::account_hold::investigators_of_held_accounts(state, config, now);
     config
         .investigators()
         .keys()
-        .filter(|name| paused.contains(*name) || refused.iter().any(|agent| agent.as_str() == name.as_str()))
+        .filter(|name| {
+            paused.contains(*name)
+                || held.contains(*name)
+                || refused.iter().any(|agent| agent.as_str() == name.as_str())
+        })
         .cloned()
         .collect()
 }

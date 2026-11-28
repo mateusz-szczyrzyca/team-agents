@@ -59,6 +59,7 @@ args = ["-c", "model_reasoning_effort=\"high\""]
 # [accounts.comp-claude]
 # owner = "comp"                                  # a lowercase word of letters and digits
 # max_runs = 1                                    # optional: at most this many runs of the account at once; no key, no limit
+# hold_at = 0.9                                   # optional, 0..1: from this share of a limit window no new run of the account starts until the window resets
 # [accounts.comp-claude.env]
 # CLAUDE_CONFIG_DIR = "/home/you/.claude-comp"    # not a secret; Codex: CODEX_HOME
 #
