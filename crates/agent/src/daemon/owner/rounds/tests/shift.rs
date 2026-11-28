@@ -223,9 +223,7 @@ async fn shift_waits_for_the_gate() {
     });
 
     rig.wait_for("the gate to be accepted by the gate service", || {
-        rig.home
-            .gate_log(&tasks[0], std::num::NonZeroU32::MIN)
-            .is_file()
+        rig.home.gate_log(&tasks[0], std::num::NonZeroU32::MIN).is_file()
     })
     .await;
 
