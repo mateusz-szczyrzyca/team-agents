@@ -300,6 +300,12 @@ lists the IDs of the tasks the daemon paused for the pause of their account, in 
 that pause and by nothing else, so a restart does not wake a task the human paused. Written only when not empty. A state without it
 loads with none; a version that does not know it refuses a state that has it.
 
+**Held tasks that wait for another account (optional, absent in a state written before agent-core 0.151.0).** `account_waits` maps the
+ID of a held task that waits for the pause of the account of its lead — the work of a member that has no step left, with a lead
+whose account is paused — to the time it is woken: the end of that pause. A held task without an entry is held by the pause of its
+own agent's account and is woken at its end. Written only when not empty. A state without it loads with no such wait; a version that
+does not know it refuses a state that has it.
+
 **Accounts of sessions (optional, absent in a state written before agent-core 0.148.0).** `session_accounts` maps a task to the
 account (`[accounts.NAME]` of `agents.toml`) its session began under; a task without an entry has a session with no account,
 which is what every task of an older state has. When the agent of a task has another account at the start of a run, the run

@@ -198,6 +198,7 @@ impl Owner {
         let (status, notice) = match takeover {
             Takeover::Agent => (TaskStatus::Queued, None),
             Takeover::Lead => (TaskStatus::Stopped, None),
+            Takeover::Wait => (TaskStatus::Paused, None),
             Takeover::Nobody => (
                 TaskStatus::Failed,
                 Some(Notice::RunFailed {
@@ -212,7 +213,7 @@ impl Owner {
         self.move_to(task, &located.team, status, &mut events)?;
         self.commit(task, located, now, events, notice).await?;
         // The lead is told of the work that is its own now, and of a task that failed.
-        if takeover != Takeover::Agent {
+        if !matches!(takeover, Takeover::Agent | Takeover::Wait) {
             self.after_run(task, located, &RunEnd::Stopped, None)?;
         }
         Ok(())

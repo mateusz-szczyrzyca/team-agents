@@ -5,6 +5,8 @@
 //! applies the end of each run to its task, wakes paused tasks when their time comes and publishes what happens as
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
+#[cfg(test)]
+mod account_pick_tests;
 mod accounts;
 mod answers;
 mod bound;
@@ -534,6 +536,8 @@ enum Step {
     HandedOver,
     /// The member's task stops and its lead is given the work.
     ToLead,
+    /// Only the lead could take it, and its account is paused: the task is paused until the reset, not failed.
+    Waits,
     /// Nobody takes it: the task fails and the human decides.
     Failed,
 }
@@ -972,6 +976,7 @@ impl Owner {
             let next = match self.restart_anew(task, &located)? {
                 Step::NewSession | Step::HandedOver => Some(TaskStatus::Queued),
                 Step::ToLead => Some(TaskStatus::Stopped),
+                Step::Waits => Some(TaskStatus::Paused),
                 Step::SameSession | Step::Failed => None,
             };
             if let Some(status) = next {
@@ -1716,6 +1721,7 @@ impl Owner {
                 match self.restart_anew(task, &located)? {
                     Step::NewSession | Step::HandedOver => status = TaskStatus::Queued,
                     Step::ToLead => status = TaskStatus::Stopped,
+                    Step::Waits => status = TaskStatus::Paused,
                     Step::SameSession | Step::Failed => {}
                 }
             }
@@ -1723,7 +1729,7 @@ impl Owner {
             let notice = (status == TaskStatus::Failed).then_some(Notice::NoStatus { exit: None });
             self.commit(task, &located, now, events, notice).await?;
             // The lead is told of a failed task, and of a member's work that is its own now.
-            if failed && status != TaskStatus::Queued {
+            if failed && !matches!(status, TaskStatus::Queued | TaskStatus::Paused) {
                 self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
             }
             return Ok(());
@@ -2536,10 +2542,14 @@ impl Owner {
         names: &'a [AgentName],
         holder_tier: Tier,
         going: &[Going],
+        now: Timestamp,
     ) -> Vec<agent_core::decide::replacement::refused::Candidate<'a>> {
         use agent_core::decide::replacement::refused::Candidate;
+        // An agent of a paused account takes nothing over, whatever its provider says.
+        let free = self.not_of_paused_accounts(names, now);
         names
             .iter()
+            .filter(|name| free.contains(name))
             .filter_map(|name| {
                 let tier = self.tier_of(name)?;
                 if tier < holder_tier {
@@ -2605,10 +2615,10 @@ impl Owner {
         let holder_tier = found.member.agent().tier();
         let return_at = self.parts.state.refused_until(agent).unwrap_or(until);
         let going = self.all_runs_going();
-        let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going);
-        let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going);
+        let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going, now);
+        let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going, now);
         let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
-        let investigators = self.refusal_candidates(&inv_names, holder_tier, &going);
+        let investigators = self.refusal_candidates(&inv_names, holder_tier, &going, now);
         let request = Request {
             role: located.role,
             team: &team_names,
@@ -2823,6 +2833,7 @@ impl Owner {
             // A declared failure is never resumed in its session, so SameSession does not come from the ladder for it.
             Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
             Step::ToLead => (TaskStatus::Stopped, None),
+            Step::Waits => (TaskStatus::Paused, None),
             Step::Failed => (TaskStatus::Failed, Some(notice)),
         })
     }
@@ -2847,6 +2858,7 @@ impl Owner {
                 match self.climb(task, role, Trouble::TurnLimit, u32::try_from(count).unwrap_or(u32::MAX))? {
                     Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
                     Step::ToLead => (TaskStatus::Stopped, None),
+                    Step::Waits => (TaskStatus::Paused, None),
                     Step::Failed => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
                 }
             }
@@ -2877,6 +2889,7 @@ impl Owner {
             }
             Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
             Step::ToLead => (TaskStatus::Stopped, None),
+            Step::Waits => (TaskStatus::Paused, None),
             Step::Failed => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
@@ -2910,6 +2923,10 @@ impl Owner {
             Step::ToLead => {
                 self.hangs.remove(task);
                 (TaskStatus::Stopped, None)
+            }
+            Step::Waits => {
+                self.hangs.remove(task);
+                (TaskStatus::Paused, None)
             }
             Step::Failed => {
                 self.hangs.remove(task);
@@ -3002,6 +3019,7 @@ impl Owner {
             None => match self.take_over(task, role, trouble)? {
                 takeover::Takeover::Agent => Step::HandedOver,
                 takeover::Takeover::Lead => Step::ToLead,
+                takeover::Takeover::Wait => Step::Waits,
                 takeover::Takeover::Nobody => Step::Failed,
             },
         };

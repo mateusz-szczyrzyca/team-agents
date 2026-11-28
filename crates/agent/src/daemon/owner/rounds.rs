@@ -942,6 +942,10 @@ mod agent_slots_tests;
 mod refused_agents_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/account_candidates.rs"]
+mod account_candidates_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/serena_reminder.rs"]
 mod serena_reminder_tests;
 
