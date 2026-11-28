@@ -378,6 +378,7 @@ async fn solo_task_shifts_and_back() {
 
     assert_eq!(holder(&rig.state(), &tasks[0]), "claude-1");
 
+    rig.prompt(&tasks[0], 2).await;
     rig.advance_history_days(1);
 
     let state = rig
