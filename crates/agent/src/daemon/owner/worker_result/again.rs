@@ -3,7 +3,6 @@
 
 use std::path::Path;
 
-use agent_core::decide::account_candidates::agents_of_paused_accounts;
 use agent_core::decide::pool::{PoolWorker, Requires, second_try_pool_elsewhere};
 use agent_core::decide::worker_result::{Elsewhere, worker_for_second_try};
 use agent_core::ids::{AgentName, TaskId, TeamId};
@@ -98,7 +97,7 @@ impl Owner {
                 agent_core::kinds::Tier::Worker,
             );
             // A worker of a paused account takes no request: it is no worker elsewhere either.
-            let Some(paused) = self.agents_of_paused_accounts_now(pending.request) else {
+            let Some(free) = self.pool_without_paused_accounts(pending.request, pool) else {
                 return Elsewhere::None;
             };
             let mut pool_workers_data = Vec::new();
@@ -106,7 +105,7 @@ impl Owner {
                 let Some(agent_conf) = self.parts.settings.config.agent(name) else {
                     continue;
                 };
-                if self.is_in_active_crew(name) || (paused.is_empty() && paused.contains(name)) {
+                if self.is_in_active_crew(name) || !free.contains(name) {
                     continue;
                 }
                 let provider =
@@ -157,15 +156,11 @@ impl Owner {
         }
     }
 
-    /// The agents whose account is paused now; `None` when the clock gives no time, which is logged: no worker is offered
-    /// for the second try of `request` then.
-    fn agents_of_paused_accounts_now(&self, request: RequestId) -> Option<Vec<AgentName>> {
+    /// The workers of `pool` whose account is not paused now; `None` when the clock gives no time, which is logged: no
+    /// worker is offered for the second try of `request` then.
+    fn pool_without_paused_accounts(&self, request: RequestId, pool: &[AgentName]) -> Option<Vec<AgentName>> {
         match Timestamp::now(&self.parts.clock) {
-            Ok(now) => Some(agents_of_paused_accounts(
-                &self.parts.state,
-                &self.parts.settings.config,
-                now,
-            )),
+            Ok(now) => Some(self.not_of_paused_accounts(pool, now)),
             Err(error) => {
                 tracing::warn!(
                     event = LogEvent::DaemonTaskFailed.as_str(),
