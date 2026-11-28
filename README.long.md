@@ -270,6 +270,13 @@ account, the review, the hand-over or the request waits in the queue, not failed
 The same holds for `[replacement] mode = "lead"` (and `auto` with no agent listed): a member's work whose ladder is
 exhausted is not given to a lead of a paused account; the member's task is paused until the reset and goes on then, also after a restart of the daemon.
 
+`max_runs` in `[accounts.NAME]` limits the runs of an account: the runs of all its agents and investigators, over all teams,
+are counted together, and a queued task whose account has its `max_runs` going waits in the queue — it is not failed — and
+starts when one of those runs ends. `agent status` says it: `queued, waiting for account comp-claude (1/1 runs)`. The command
+counts the runs the state file shows; the runs of pool workers that only the daemon holds are not in that count, so the line
+may be missing while the daemon already holds the task back. `max_runs = 0` is refused; without the key there is no limit. The
+wait is a `decision_taken` record with `decision` `account_slot` and `result` `wait` ([`docs/log.md`](docs/log.md)).
+
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 
 ## Usage
