@@ -4,12 +4,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use agent_core::config::AccountName;
 use agent_core::ids::AgentName;
 use agent_core::limit_reading::{LimitReading, LimitWindow};
-use agent_core::protocol::{Client, Command, StatusRequest};
+use agent_core::protocol::{Command, StatusRequest};
 use agent_core::state::{Crew, MergeMode, ReadingOwner, State, TaskListText, Team};
 use agent_core::status::TaskStatus;
 use tracing_subscriber::layer::SubscriberExt;
@@ -130,9 +129,6 @@ fn daemon_with_three_tasks() -> Daemon {
     daemon
 }
 
-/// How long a task is watched to see that it does not start.
-const WATCH: Duration = Duration::from_millis(400);
-
 /// A pause of the clock of the daemon beyond the reset of the readings of the stand-in: 17 hours from the clock's start.
 const PAST_THE_RESET: time::Duration = time::Duration::hours(17);
 
@@ -147,7 +143,7 @@ async fn reading_above_hold_at_holds_the_account() {
     daemon.status_is(1, TaskStatus::Waiting).await;
     daemon.status_is(3, TaskStatus::Waiting).await;
     let told = daemon.notification_with("claude-main is held").await;
-    tokio::time::sleep(WATCH).await;
+    after_an_admission_pass(&daemon).await;
 
     let state = daemon.state();
     assert_eq!(state.find_task(&task(2)).unwrap().member.status(), TaskStatus::Queued);
@@ -180,7 +176,7 @@ async fn restart_keeps_the_hold() {
     daemon.stop().await.unwrap();
 
     daemon.start().await;
-    tokio::time::sleep(WATCH).await;
+    after_an_admission_pass(&daemon).await;
 
     let state = daemon.state();
     assert_eq!(state.find_task(&task(2)).unwrap().member.status(), TaskStatus::Queued);
