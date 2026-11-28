@@ -1678,3 +1678,7 @@ mod account_status_tests;
 #[cfg(test)]
 #[path = "status/tests/reading_status.rs"]
 mod reading_status_tests;
+
+#[cfg(test)]
+#[path = "status/tests/shift.rs"]
+mod shift_status_tests;
