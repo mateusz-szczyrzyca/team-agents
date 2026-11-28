@@ -62,6 +62,7 @@ pub(super) fn line(
     team: &TeamSummary,
     columns: Columns,
     activity: &dyn Fn(&TaskId) -> Option<String>,
+    _accounts: &dyn Fn(&TaskId) -> Option<String>,
     zone: Zone,
 ) -> String {
     let waiting = member.open_question.map_or_else(String::new, |number| {

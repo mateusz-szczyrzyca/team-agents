@@ -1,6 +1,7 @@
 //! `agent status`: the teams the daemon knows, their rounds, and what each of their tasks is doing — or, for a round, its
 //! item, the tasks that worked for it, its pull request and its review passes.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -225,10 +226,35 @@ impl Activity {
     /// # Errors
     /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
     pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+        Ok(self.config().await?.and_then(|config| cli_runs_line(&config, teams)))
+    }
+
+    /// What each queued task of `teams` whose account has its `max_runs` going says of it, by task: the runs are counted
+    /// over every team of the state of the daemon, which is read with the configuration; nothing when either is missing.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] or [`StatusError::ConfigParse`] for the configuration, [`StatusError::Refusals`] when
+    /// the state file exists but cannot be read.
+    pub(crate) async fn account_waits(&self, teams: &[TeamSummary]) -> Result<BTreeMap<TaskId, String>, StatusError> {
+        let Some(config) = self.config().await? else {
+            return Ok(BTreeMap::new());
+        };
+        let Some((state, _)) = self.state_now().await? else {
+            return Ok(BTreeMap::new());
+        };
+        Ok(accounts::waits(&config, &state, teams))
+    }
+
+    /// The configuration, read asynchronously so status rendering never blocks its runtime thread; `None` when the file
+    /// does not exist, the only reason a configuration is omitted.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn config(&self) -> Result<Option<agent_core::config::Config>, StatusError> {
         let path = self.home.config_file();
         match tokio::fs::read_to_string(&path).await {
             Ok(text) => agent_core::config::Config::from_toml_str(&text)
-                .map(|config| cli_runs_line(&config, teams))
+                .map(Some)
                 .map_err(|source| StatusError::ConfigParse { path, source }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(StatusError::ConfigRead { path, source }),
@@ -1014,6 +1040,34 @@ fn render_with_requests(
     under: Under<'_>,
     zone: Zone,
 ) -> String {
+    let waiting = Waiting {
+        under,
+        accounts: &|_| None,
+    };
+    render_with_waits(teams, view, detail, activity, rounds, waiting, zone)
+}
+
+/// What [`render_with_waits`] writes besides the lines of the tasks: what goes under them, and what a queued task whose
+/// account has its most runs going says of it.
+#[derive(Clone, Copy)]
+struct Waiting<'a> {
+    /// The lines under the lines of a team.
+    under: Under<'a>,
+    /// What a queued task says of the account it waits for, such as `waiting for account comp-claude (1/1 runs)`.
+    accounts: &'a dyn Fn(&TaskId) -> Option<String>,
+}
+
+/// [`render_with_requests`] with what the tasks that wait for their account say.
+fn render_with_waits(
+    teams: &[TeamSummary],
+    view: View,
+    detail: Detail,
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    waiting: Waiting<'_>,
+    zone: Zone,
+) -> String {
+    let under = waiting.under;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -1078,14 +1132,14 @@ fn render_with_requests(
                 team.members
                     .iter()
                     .filter(|member| members::listed(member))
-                    .map(|member| members::line(member, team, columns, activity, zone)),
+                    .map(|member| members::line(member, team, columns, activity, waiting.accounts, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(member, team, columns, activity, zone));
+            lines.push(members::line(member, team, columns, activity, waiting.accounts, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -1433,6 +1487,10 @@ mod short_members_tests;
 #[cfg(test)]
 #[path = "status/tests/versions.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_waits.rs"]
+mod account_waits_tests;
 
 #[cfg(test)]
 #[path = "status/tests/split_tier.rs"]

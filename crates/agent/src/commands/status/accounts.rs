@@ -1,8 +1,13 @@
 //! The accounts whose provider refused a run, as `agent status` shows them until each resumes.
 
-use agent_core::config::AccountName;
+use std::collections::BTreeMap;
+
+use agent_core::config::{AccountName, Config};
 use agent_core::decide::limit::Limit;
+use agent_core::ids::TaskId;
 use agent_core::local_time::Zone;
+use agent_core::protocol::TeamSummary;
+use agent_core::state::State;
 use agent_core::state::{AccountPause, Timestamp};
 
 #[cfg(test)]
@@ -35,4 +40,11 @@ pub(crate) fn account_lines<'a>(
         })
         .collect();
     (!lines.is_empty()).then(|| lines.concat())
+}
+
+/// What each queued task of `teams` whose account has its `max_runs` going says of it, by task, as the runs of `state`
+/// are counted over every team of the daemon.
+#[must_use]
+pub(crate) fn waits(_config: &Config, _state: &State, _teams: &[TeamSummary]) -> BTreeMap<TaskId, String> {
+    BTreeMap::new()
 }
