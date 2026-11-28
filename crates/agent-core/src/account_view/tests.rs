@@ -124,5 +124,5 @@ fn an_account_view_names_its_owner_agents_and_variables_without_values() {
 fn a_configuration_without_accounts_has_no_account_view() {
     let config = Config::from_toml_str("[agents.codex-1]\ncli = \"codex\"\n[tiers]\nnormal = [\"codex-1\"]\n").unwrap();
 
-    assert!(account_views(&config, &Secrets::default()).is_empty());
+    assert_eq!(account_views(&config, &Secrets::default()), Vec::<AccountView>::new());
 }
