@@ -67,6 +67,9 @@ pub(super) enum Takeover {
     Agent,
     /// The member's task stops and the team's lead is given its work.
     Lead,
+    /// Nobody for now: the only one that fits is the lead, whose account is paused. The task is paused until the reset
+    /// and carries on then, not failed.
+    Wait,
     /// Nobody: the task fails and the human decides, as before `[replacement] agents`.
     Nobody,
 }
@@ -124,6 +127,16 @@ impl Owner {
                 handed_over(&team, task, held.name(), name.as_str(), trouble);
                 Takeover::Agent
             }
+            Chosen::Wait { until } => {
+                // The task keeps its holder: it is paused, and woken with the accounts' own wake-ups at the reset.
+                self.hold_waiting(task, until);
+                log_decision(
+                    "takeover",
+                    &format!("task={task}, from={}", held.name()),
+                    "wait for the lead's account",
+                );
+                Takeover::Wait
+            }
             Chosen::Lead => {
                 // The state owes the work to the lead until it is told, so that a restart before then tells it all the same.
                 self.parts.state.owe_lead(task, trouble, at)?;
@@ -164,7 +177,7 @@ impl Owner {
             .collect();
         let busy = self.agents_in_runs();
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
+        let refused = self.unavailable_agents_at(now);
         let listed: Vec<(&AgentName, Tier, Activity)> = replacement
             .agents()
             .iter()
@@ -188,10 +201,19 @@ impl Owner {
             .collect();
         let chosen = match choose(role, held.tier(), &candidates, replacement.mode()) {
             Handover::Agent(name) => Some(Chosen::Agent(name.clone())),
-            Handover::Lead => agent_core::decide::assign::dispatch::coordinator_can_take_over(found.team, member)
-                .then_some(Chosen::Lead),
-            // The question to the human after the last step is not asked yet: the task fails as before.
-            Handover::Human => None,
+            // The lead's account may be paused: the lead is no one to give work to now, and the member's task waits for
+            // the reset, not failed.
+            Handover::Lead if agent_core::decide::assign::dispatch::coordinator_can_take_over(found.team, member) => {
+                let paused_until = found
+                    .team
+                    .crew()
+                    .coordinator()
+                    .and_then(|lead| self.account_paused_until(lead.agent().name(), now));
+                Some(paused_until.map_or(Chosen::Lead, |until| Chosen::Wait { until }))
+            }
+            // A lead that cannot take the work, and the question to the human after the last step, which is not asked
+            // yet: the task fails as before.
+            Handover::Lead | Handover::Human => None,
         };
         Ok(chosen)
     }
@@ -488,7 +510,7 @@ impl Owner {
         let going = self.all_runs_going();
         let busy: std::collections::HashSet<_> = going.iter().map(|run| &run.agent).collect();
         // An agent its provider refused is not free until its return: it takes no task over.
-        let refused = self.parts.state.refused_agents_at(Timestamp::now(&self.parts.clock)?);
+        let refused = self.unavailable_agents_at(Timestamp::now(&self.parts.clock)?);
         let in_team: Vec<&str> = found
             .team
             .crew()
@@ -636,4 +658,9 @@ enum Chosen {
     Agent(AgentName),
     /// The team's lead, for a member's work.
     Lead,
+    /// The lead's account is paused: the member's task waits until `until`, the end of that pause.
+    Wait {
+        /// When the lead's account may run again.
+        until: Timestamp,
+    },
 }
