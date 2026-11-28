@@ -48,6 +48,9 @@ pub enum Trouble {
     Human,
     /// A human swapped the task's agent with `agent swap`; no run went bad.
     Swap,
+    /// The account of the task's agent changed: a session belongs to its account, so the task starts in a new session. No
+    /// run went bad.
+    AccountChanged,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -101,7 +104,8 @@ pub fn next_step(
         | Trouble::Failed
         | Trouble::RoundOverdue
         | Trouble::Human
-        | Trouble::Swap => false,
+        | Trouble::Swap
+        | Trouble::AccountChanged => false,
     };
     if retried {
         return LadderStep::SameSession;

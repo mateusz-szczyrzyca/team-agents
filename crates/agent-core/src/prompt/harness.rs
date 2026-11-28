@@ -102,6 +102,15 @@ pub enum HarnessPrompt {
     BriefingMessageCut,
     /// The note of a briefing whose list of unread messages leaves older ones out.
     BriefingMessagesLeftOut,
+    /// The line of the briefing's list of reasons that tells the account of the task's agent changed, which a session
+    /// belongs to.
+    BriefingAccountChanged,
+    /// The note an investigator's prompt ends with when the account of its agent changed: its new session did not resume
+    /// the one before. An investigator works for no round, so it has no briefing of the kind of [`Self::Briefing`].
+    BriefingInvestigationAccountChanged,
+    /// The plan the session before saved in the worktree of an investigator, told to its new session after the note of
+    /// [`Self::BriefingInvestigationAccountChanged`]; `{{plan}}` is the plan as its file keeps it.
+    BriefingInvestigationPlan,
     /// The note that older runs of the task are left out of the briefing's list of runs.
     BriefingRunsLeftOut,
     /// The note that older answers of the human are left out of the briefing's list of answers.
@@ -238,6 +247,9 @@ impl HarnessPrompt {
         Self::BriefingLastMessageHistory,
         Self::BriefingMessageCut,
         Self::BriefingMessagesLeftOut,
+        Self::BriefingAccountChanged,
+        Self::BriefingInvestigationAccountChanged,
+        Self::BriefingInvestigationPlan,
         Self::BriefingRunsLeftOut,
         Self::BriefingAnswersLeftOut,
         Self::BriefingPlanConfirmed,
@@ -369,6 +381,7 @@ impl HarnessPrompt {
                     "review_state",
                     "findings",
                     "checkpoint",
+                    "reason_note",
                 ],
             ),
             Self::LeadBriefing => lead_briefing_spec(),
@@ -413,6 +426,17 @@ impl HarnessPrompt {
             ),
             Self::BriefingMessageCut => {
                 PromptSpec::new("harness/run/briefing-message-cut.md", Audience::Model, &["limit"])
+            }
+            Self::BriefingAccountChanged => {
+                PromptSpec::new("harness/run/briefing-account-changed.md", Audience::Model, &[])
+            }
+            Self::BriefingInvestigationAccountChanged => PromptSpec::new(
+                "harness/run/briefing-investigation-account-changed.md",
+                Audience::Model,
+                &[],
+            ),
+            Self::BriefingInvestigationPlan => {
+                PromptSpec::new("harness/run/briefing-investigation-plan.md", Audience::Model, &["plan"])
             }
             Self::BriefingRunsLeftOut => PromptSpec::new("harness/run/briefing-runs-left-out.md", Audience::Model, &[]),
             Self::BriefingAnswersLeftOut => {

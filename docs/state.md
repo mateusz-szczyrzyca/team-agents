@@ -300,6 +300,13 @@ lists the IDs of the tasks the daemon paused for the pause of their account, in 
 that pause and by nothing else, so a restart does not wake a task the human paused. Written only when not empty. A state without it
 loads with none; a version that does not know it refuses a state that has it.
 
+**Accounts of sessions (optional, absent in a state written before agent-core 0.148.0).** `session_accounts` maps a task to the
+account (`[accounts.NAME]` of `agents.toml`) its session began under; a task without an entry has a session with no account,
+which is what every task of an older state has. When the agent of a task has another account at the start of a run, the run
+starts a new session briefed as `agent renew` does, with the reason `account_changed` (`renewals.reason`; no renewal is
+counted), and the entry is replaced or removed. Every role is started anew for it: a worker, a reviewer and an investigator too (an investigator works for no round: its prompt ends with a note that the account changed and the plan the session before saved in its worktree, not with the briefing). Written only when not empty and dropped with the team of the task. A state
+without it loads with none; a version that does not know it refuses a state that has it.
+
 **Commit cuts (optional, absent in a state written before agent 0.122.0).** `commit_cuts` maps a task to the IDs of its
 runs that the daemon cut for an order to commit (`[commit_reminder] cut_after`) and resumed in their session; the clock
 of `[limits] round_minutes` does not start again after such a run. Written only when not empty; removing a team removes
