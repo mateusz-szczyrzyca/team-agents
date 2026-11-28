@@ -295,3 +295,80 @@ async fn a_task_that_waited_for_its_account_still_tells_that_it_waits_for_its_ag
         .collect();
     assert_eq!(holders, vec![task(9).to_string()]);
 }
+
+/// A bus whose queue holds request 1 of `claude-1`'s task 1, and that writes the arguments of every claim to `claims`
+/// beside itself.
+fn bus_with_one_request(dir: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bus = dir.join("bus");
+    std::fs::write(
+        &bus,
+        r#"#!/bin/sh
+case "$*" in
+ *helper-list*) printf '%s\n' '[{"id":1,"from":"claude-1","from_task":"task-20261122-120000-aaaa","repo":"team-agents","branch":"main","status":"queued"}]' ;;
+ *helper-next*) echo "$*" >> "$(dirname "$0")/claims" ;;
+ *) exit 1 ;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bus
+}
+
+/// The names of the pool workers the daemon claimed a request for, from the bus of `scripts`.
+fn claims(scripts: &std::path::Path) -> String {
+    std::fs::read_to_string(scripts.join("claims")).unwrap_or_default()
+}
+
+/// A daemon whose pool is the worker `claude-pool` of the account `claude-acc` (`max_runs` as `max_runs` says), shared with the
+/// agent `claude-2`, whose task 2 runs.
+fn pool_beside_a_run(scripts: &std::path::Path, max_runs: u32) -> Daemon {
+    let mut state = team_of("claude-2", &[2]);
+    run_task(&mut state, 2);
+    let daemon = Daemon::new(&state, Some(&bus_with_one_request(scripts)));
+    let path = daemon.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let header = "[agents.claude-2]\ncli = \"claude\"\n";
+    assert!(text.contains(header), "{text}");
+    let text = text.replace(header, &format!("{header}account = \"claude-acc\"\n"));
+    let text = text.replace(
+        "[tiers]",
+        &format!(
+            "[agents.claude-pool]\ncli = \"claude\"\naccount = \"claude-acc\"\n\
+             [accounts.claude-acc]\nowner = \"claude\"\nmax_runs = {max_runs}\n[tiers]\nworkers = [\"claude-pool\"]\n"
+        ),
+    );
+    std::fs::write(&path, text).unwrap();
+    daemon
+}
+
+// Rule: a request is given to no pool worker whose account has its most runs going: it stays queued, not failed, for the
+// run that ends.
+#[tokio::test]
+async fn a_request_is_not_given_to_a_pool_worker_of_a_full_account() {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = pool_beside_a_run(scripts.path(), 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.serve_pool_requests().await.unwrap();
+
+    assert_eq!(claims(scripts.path()), "");
+}
+
+// Rule: with room in the account the same pool worker takes the request.
+#[tokio::test]
+async fn a_request_is_given_to_a_pool_worker_of_an_account_with_room() {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = pool_beside_a_run(scripts.path(), 2);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.serve_pool_requests().await.unwrap();
+
+    assert!(
+        claims(scripts.path()).contains("claude-pool"),
+        "{}",
+        claims(scripts.path())
+    );
+}
