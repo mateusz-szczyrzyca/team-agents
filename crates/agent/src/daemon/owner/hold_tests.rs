@@ -276,14 +276,16 @@ async fn a_hold_is_logged_when_it_begins_and_when_it_ends_and_told_once() {
     assert!(told[0].contains("claude-1") && told[0].contains("claude-2"), "{told:?}");
 }
 
-// Rule: a daemon that starts on a state that holds an account does not tell the hold again: it began before.
+// Rule: a daemon that starts on a state that records the hold of an account does not tell the hold again: it began
+// before.
 #[tokio::test]
 async fn a_hold_that_began_before_a_restart_is_not_told_again() {
-    let daemon = Daemon::new(&state_with_reading(0.6), None);
+    let mut state = state_with_reading(0.6);
+    state.record_account_hold(claude_main(), Some(at(3600)));
+    let daemon = Daemon::new(&state, None);
     configure(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
-    owner.remember_holds(at(0));
     owner.update_holds(at(1)).await;
 
     assert_eq!(daemon.notifications(), Vec::<String>::new());
