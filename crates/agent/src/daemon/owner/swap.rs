@@ -150,7 +150,7 @@ impl Owner {
         }
 
         let now = Timestamp::now(&self.parts.clock)?;
-        let held = {
+        let (held, status) = {
             let found = self
                 .parts
                 .state
@@ -158,15 +158,20 @@ impl Owner {
                 .ok_or_else(|| OwnerError::LostTask {
                     task: request.task.clone(),
                 })?;
-            found.member.agent().clone()
+            (found.member.agent().clone(), found.member.status())
         };
+
+        // A run may have completed naturally before the halt reached it.
+        if status == TaskStatus::Done || self.closed.contains(&team_id) {
+            return Ok(Err(SwapRefusal::Done { task: request.task }.into()));
+        }
 
         // 4. Hand the task over with Choice::Human and Trouble::Swap.
         self.hand_task_over(&request.task, &request.agent, &held, Choice::Human, Trouble::Swap, now)?;
 
-        // 5. If it was running, queue the task so its new run starts.
+        // 5. Only a stopped run needs queuing; keep questions and other final results.
         let mut events = Vec::new();
-        if was_running {
+        if was_running && status == TaskStatus::Stopped {
             self.move_to(&request.task, &team_id, TaskStatus::Queued, &mut events)?;
         }
 
