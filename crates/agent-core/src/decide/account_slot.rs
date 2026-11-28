@@ -7,7 +7,7 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use super::slot::Going;
-use crate::config::{AccountName, Config};
+use crate::config::{Account, AccountName, Config};
 use crate::ids::AgentName;
 
 #[cfg(test)]
@@ -46,12 +46,30 @@ impl fmt::Display for AccountFull {
 /// The slot of `account` with `max_runs` as its limit when `running` of its runs go: full when the count has reached the
 /// limit; open for an agent without an account and for an account without a limit.
 #[must_use]
-pub fn account_slot(_account: Option<&AccountName>, _max_runs: Option<NonZeroU32>, _running: u32) -> AccountSlot {
-    AccountSlot::Open
+pub fn account_slot(account: Option<&AccountName>, max_runs: Option<NonZeroU32>, running: u32) -> AccountSlot {
+    match (account, max_runs) {
+        (Some(account), Some(limit)) if running >= limit.get() => AccountSlot::Full(AccountFull {
+            account: account.clone(),
+            running,
+            limit,
+        }),
+        _ => AccountSlot::Open,
+    }
 }
 
-/// The slot an agent `agent` has in the configuration `config` while the runs `going` go, over every team.
+/// The slot an agent `agent` has in the configuration `config` while the runs `going` go, over every team: the runs of
+/// every agent and investigator that has the same account are counted.
 #[must_use]
-pub fn slot_of(_config: &Config, _agent: &AgentName, _going: &[Going]) -> AccountSlot {
-    AccountSlot::Open
+pub fn slot_of(config: &Config, agent: &AgentName, going: &[Going]) -> AccountSlot {
+    let Some(account) = config.account_of(agent) else {
+        return AccountSlot::Open;
+    };
+    let running = going
+        .iter()
+        .filter(|run| config.account_of(&run.agent) == Some(account))
+        .count();
+    // More runs than a `u32` holds cannot go at once; the saturated count is still above any limit.
+    let running = u32::try_from(running).unwrap_or(u32::MAX);
+    let max_runs = config.accounts().get(account).and_then(Account::max_runs);
+    account_slot(Some(account), max_runs, running)
 }
