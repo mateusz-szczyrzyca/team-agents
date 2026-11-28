@@ -632,7 +632,7 @@ fn member_without_human_handovers_reads_as_zero() {
     ))
     .unwrap();
     let written = serde_json::to_value(&member).unwrap();
-    assert_eq!(written["human_handovers"], 0);
+    assert_eq!(written.get("human_handovers"), None);
     assert_eq!(member.harness_takeovers(), member.past_holders().len());
 }
 
