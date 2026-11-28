@@ -1348,9 +1348,7 @@ impl AgentBus {
         let command = BusCommand::ClaimLead;
         self.run(
             command,
-            Args::new()
-                .flag("--team", team.as_str())
-                .flag("--as", member.as_str()),
+            Args::new().flag("--team", team.as_str()).flag("--as", member.as_str()),
             None,
         )
         .await

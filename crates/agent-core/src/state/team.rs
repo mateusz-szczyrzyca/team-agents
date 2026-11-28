@@ -347,9 +347,7 @@ impl Crew {
         at: Timestamp,
     ) -> Result<(Participant, Participant), HandOverError> {
         let Shape::Team {
-            coordinator,
-            members,
-            ..
+            coordinator, members, ..
         } = &mut self.shape
         else {
             return Err(HandOverError::Role {

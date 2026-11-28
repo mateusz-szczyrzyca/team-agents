@@ -1241,7 +1241,9 @@ fn render_with_notes(
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(member, team, columns, accounts, activity, waits, shifts, zone));
+            lines.push(members::line(
+                member, team, columns, accounts, activity, waits, shifts, zone,
+            ));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -1289,7 +1291,12 @@ pub(crate) fn shifts(
     teams
         .iter()
         .flat_map(|team| &team.members)
-        .filter(|member| matches!(member.role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Coordinator))
+        .filter(|member| {
+            matches!(
+                member.role,
+                agent_core::kinds::Role::Solo | agent_core::kinds::Role::Coordinator
+            )
+        })
         .filter_map(|member| {
             let found = state.find_task(&member.task)?;
             let worked_secs = agent_core::decide::shift::worked_secs(&found.member, now);

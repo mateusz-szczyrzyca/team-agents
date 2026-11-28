@@ -179,21 +179,22 @@ impl Owner {
                 .roster()
                 .into_iter()
                 .find(|(_, m)| m.agent().agent_name() == *candidate)
-                .ok_or_else(|| OwnerError::LostTask { task: coord_task.clone() })?;
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: coord_task.clone(),
+                })?;
             (member.task().clone(), member.agent().clone())
         };
 
-        let tasks_to_halt: Vec<TaskId> = [coord_task.clone(), member_task.clone()]
-            .into_iter()
-            .filter(|t| {
-                self.in_flight.contains(t)
-                    || self
-                        .parts
-                        .state
-                        .find_task(t)
-                        .is_some_and(|f| f.member.status() == TaskStatus::Running || f.member.current_run().is_some())
-            })
-            .collect();
+        let tasks_to_halt: Vec<TaskId> =
+            [coord_task.clone(), member_task.clone()]
+                .into_iter()
+                .filter(|t| {
+                    self.in_flight.contains(t)
+                        || self.parts.state.find_task(t).is_some_and(|f| {
+                            f.member.status() == TaskStatus::Running || f.member.current_run().is_some()
+                        })
+                })
+                .collect();
         for t in &tasks_to_halt {
             self.halt(t, Halt::Stop);
         }
@@ -211,13 +212,17 @@ impl Owner {
                 .crew()
                 .coordinator()
                 .map(|c| (Role::Coordinator, c))
-                .ok_or_else(|| OwnerError::LostTask { task: coord_task.clone() })?;
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: coord_task.clone(),
+                })?;
             let (_, member) = team
                 .crew()
                 .roster()
                 .into_iter()
                 .find(|(_, m)| m.task() == &member_task)
-                .ok_or_else(|| OwnerError::LostTask { task: member_task.clone() })?;
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: member_task.clone(),
+                })?;
             (coord.agent().clone(), coord.status(), member.status())
         };
 
@@ -234,7 +239,10 @@ impl Owner {
                     .iter()
                     .filter_map(|p| match p.phase() {
                         ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
-                            if assignee.as_str() == agent_a.name() => Some((p.id(), branch.clone())),
+                            if assignee.as_str() == agent_a.name() =>
+                        {
+                            Some((p.id(), branch.clone()))
+                        }
                         _ => None,
                     })
                     .collect()
@@ -249,7 +257,10 @@ impl Owner {
                     .iter()
                     .filter_map(|p| match p.phase() {
                         ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
-                            if assignee.as_str() == agent_b.name() => Some((p.id(), branch.clone())),
+                            if assignee.as_str() == agent_b.name() =>
+                        {
+                            Some((p.id(), branch.clone()))
+                        }
                         _ => None,
                     })
                     .collect()
@@ -278,7 +289,9 @@ impl Owner {
         }
 
         self.parts.state.begin_holder_session(coord_task, Trouble::Shift, now)?;
-        self.parts.state.begin_holder_session(&member_task, Trouble::Shift, now)?;
+        self.parts
+            .state
+            .begin_holder_session(&member_task, Trouble::Shift, now)?;
 
         self.queue_for_task(coord_task, CheckpointCause::HolderChanged);
         self.queue_for_task(&member_task, CheckpointCause::HolderChanged);
