@@ -74,6 +74,12 @@ fn busy(state: &mut State, number: u32) {
         .1
         .begin_run(run(number), at(0), None)
         .unwrap();
+    state
+        .find_task_mut(&task(number))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
 }
 
 /// Give an excluded role enough running work on a PR round to otherwise be due.
