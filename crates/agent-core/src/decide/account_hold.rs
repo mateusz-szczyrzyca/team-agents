@@ -5,9 +5,10 @@
 //! keeps for it and the clock. Nothing is stored for the hold itself: it follows from the readings, so a restart
 //! of the daemon keeps it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{AccountName, Config, HoldAt};
+use crate::ids::InvestigatorName;
 use crate::limit_reading::LimitWindow;
 use crate::state::{KeptReading, ReadingOwner, State, Timestamp};
 
@@ -70,4 +71,17 @@ pub fn held_accounts(state: &State, config: &Config, now: Timestamp) -> BTreeMap
             ReadingOwner::Agent(_) => None,
         })
         .collect()
+}
+
+/// The accounts of `config` that are held at `now` and until when: those a recorded hold of the state keeps until its
+/// end, and those a kept reading holds.
+#[must_use]
+pub fn held_until(_state: &State, _config: &Config, _now: Timestamp) -> BTreeMap<AccountName, Timestamp> {
+    BTreeMap::new()
+}
+
+/// The investigators of `config` whose account is held at `now`.
+#[must_use]
+pub fn investigators_of_held_accounts(_state: &State, _config: &Config, _now: Timestamp) -> BTreeSet<InvestigatorName> {
+    BTreeSet::new()
 }

@@ -1,12 +1,14 @@
 //! Table tests of the hold of an account: which readings hold it and until when.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::{Config, HoldAt};
+use crate::config::{AccountName, Config, HoldAt};
+use crate::decide::investigator::{free_for_request, refused_investigators};
+use crate::ids::InvestigatorName;
 use crate::limit_reading::{LimitReading, LimitWindow};
 use crate::state::{KeptReading, ReadingOwner, State, Timestamp};
 
-use super::{Hold, held_accounts, hold};
+use super::{Hold, held_accounts, held_until, hold, investigators_of_held_accounts};
 
 /// A moment of these tests.
 fn at(text: &str) -> Timestamp {
@@ -217,4 +219,135 @@ fn held_accounts_lets_go_of_an_account_when_its_window_has_reset() {
 
     assert_eq!(before.len(), 1);
     assert_eq!(at_reset, BTreeMap::new());
+}
+
+/// An account of these tests.
+fn account(name: &str) -> AccountName {
+    name.parse().unwrap()
+}
+
+/// A configuration with an investigator for each of the accounts `comp-claude` (held at 0.9) and `other-claude`, and one
+/// investigator without an account.
+fn with_investigators() -> Config {
+    Config::from_toml_str(
+        r#"
+[accounts.comp-claude]
+owner = "comp"
+hold_at = 0.9
+
+[accounts.other-claude]
+owner = "other"
+
+[agents.comp-claude-1]
+cli = "claude"
+account = "comp-claude"
+
+[investigators.comp-inv]
+cli = "claude"
+account = "comp-claude"
+
+[investigators.other-inv]
+cli = "claude"
+account = "other-claude"
+
+[investigators.free-inv]
+cli = "claude"
+
+[tiers]
+normal = ["comp-claude-1"]
+"#,
+    )
+    .unwrap()
+}
+
+/// The state with the reading of `used` for `comp-claude`, and a recorded hold of it until `until` when there is one.
+fn comp_state(used: f64, recorded: Option<&str>) -> State {
+    let reading = LimitReading::new(LimitWindow::FiveHour, used, at("2026-11-28T12:00:00Z")).unwrap();
+    let mut state = state_with("comp-claude", reading);
+    if let Some(until) = recorded {
+        state.record_account_hold(account("comp-claude"), Some(at(until)));
+    }
+    state
+}
+
+#[test]
+fn a_reading_that_holds_the_account_is_listed_with_its_reset() {
+    let state = comp_state(0.95, None);
+
+    assert_eq!(
+        held_until(&state, &with_investigators(), now()),
+        BTreeMap::from([(account("comp-claude"), at("2026-11-28T12:00:00Z"))])
+    );
+}
+
+#[test]
+fn a_recorded_hold_lasts_until_its_end_after_a_lower_reading() {
+    let state = comp_state(0.4, Some("2026-11-28T12:00:00Z"));
+
+    assert_eq!(
+        held_until(&state, &with_investigators(), now()),
+        BTreeMap::from([(account("comp-claude"), at("2026-11-28T12:00:00Z"))])
+    );
+}
+
+#[test]
+fn a_recorded_hold_ends_at_its_end() {
+    let state = comp_state(0.4, Some("2026-11-28T12:00:00Z"));
+
+    assert_eq!(
+        held_until(&state, &with_investigators(), at("2026-11-28T11:59:59Z")).len(),
+        1
+    );
+    assert_eq!(
+        held_until(&state, &with_investigators(), at("2026-11-28T12:00:00Z")),
+        BTreeMap::new()
+    );
+}
+
+#[test]
+fn a_recorded_hold_of_an_account_without_hold_at_or_unknown_holds_nobody() {
+    let mut state = State::new();
+    state.record_account_hold(account("other-claude"), Some(at("2026-11-28T12:00:00Z")));
+    state.record_account_hold(account("not-in-the-config"), Some(at("2026-11-28T12:00:00Z")));
+
+    assert_eq!(held_until(&state, &with_investigators(), now()), BTreeMap::new());
+}
+
+#[test]
+fn the_later_end_wins_when_a_recorded_hold_and_a_reading_both_hold() {
+    let state = comp_state(0.95, Some("2026-11-28T11:00:00Z"));
+
+    assert_eq!(
+        held_until(&state, &with_investigators(), now()),
+        BTreeMap::from([(account("comp-claude"), at("2026-11-28T12:00:00Z"))])
+    );
+}
+
+#[test]
+fn the_investigators_of_a_held_account_are_those_that_name_it() {
+    let state = comp_state(0.95, None);
+
+    assert_eq!(
+        investigators_of_held_accounts(&state, &with_investigators(), now()),
+        BTreeSet::from(["comp-inv".parse::<InvestigatorName>().unwrap()])
+    );
+    assert_eq!(
+        investigators_of_held_accounts(&State::new(), &with_investigators(), now()),
+        BTreeSet::new()
+    );
+}
+
+#[test]
+fn an_investigator_of_a_held_account_is_refused_for_reviews_and_requests() {
+    let state = comp_state(0.4, Some("2026-11-28T12:00:00Z"));
+    let config = with_investigators();
+
+    let refused = refused_investigators(&state, &config, now());
+    let free = free_for_request(&state, &config, now());
+
+    assert_eq!(refused, ["comp-inv".parse::<InvestigatorName>().unwrap()].into());
+    assert_eq!(
+        free,
+        BTreeSet::from(["free-inv", "other-inv"].map(|name| name.parse::<InvestigatorName>().unwrap()))
+    );
 }

@@ -44,6 +44,8 @@ mod account_wait_tests;
 #[cfg(test)]
 mod commit_cut_tests;
 #[cfg(test)]
+mod held_account_tests;
+#[cfg(test)]
 mod human_session_tests;
 #[cfg(test)]
 mod limit_tests;
@@ -522,6 +524,20 @@ impl State {
     /// The paused accounts with their pauses, in the order of the account names.
     pub fn account_pauses(&self) -> impl Iterator<Item = (&crate::config::AccountName, &AccountPause)> {
         self.accounts.iter()
+    }
+
+    /// The end of the hold of `account`, `None` when the account is not held by a recorded hold.
+    #[must_use]
+    pub fn account_hold_until(&self, _account: &crate::config::AccountName) -> Option<Timestamp> {
+        None
+    }
+
+    /// Records that `account` is held until `until`, or forgets its hold with `None`.
+    pub fn record_account_hold(&mut self, _account: crate::config::AccountName, _until: Option<Timestamp>) {}
+
+    /// The recorded holds with their ends, in the order of the account names.
+    pub fn account_holds(&self) -> impl Iterator<Item = (&crate::config::AccountName, Timestamp)> {
+        std::iter::empty()
     }
 
     /// The newest readings of the rate-limit windows, per account and per agent without one.
