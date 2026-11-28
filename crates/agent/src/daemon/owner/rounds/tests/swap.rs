@@ -466,6 +466,12 @@ async fn swap_ignores_replacements_zero() {
         }
     );
 
+    let state = rig.state();
+    let member = state.find_task(&member_task).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-2");
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
+
     rig.stop().await.unwrap();
 }
 
