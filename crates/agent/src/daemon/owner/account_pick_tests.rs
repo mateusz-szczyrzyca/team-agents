@@ -243,3 +243,36 @@ async fn the_unavailable_agents_include_the_investigators_of_a_paused_account() 
     let names: Vec<&str> = unavailable.iter().map(agent_core::ids::AgentName::as_str).collect();
     assert_eq!(names, ["inv-1"]);
 }
+
+// Rule: a member's task that waits for the account of its lead is woken, after a restart of the daemon, at the end of
+// the lead's pause — not at once because its own agent's account is not paused.
+#[tokio::test]
+async fn a_task_waiting_for_a_lead_of_a_paused_account_is_woken_at_the_reset_after_a_restart() {
+    let mut state = pair_state();
+    pause(&mut state, "claude-paused");
+    let daemon = Daemon::new(&state, None);
+    let path = daemon.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let header = "[agents.claude-1]\ncli = \"claude\"\n";
+    assert!(text.contains(header), "{text}");
+    let text = text.replace(header, &format!("{header}account = \"claude-paused\"\n"));
+    std::fs::write(
+        &path,
+        format!("{text}\n[accounts.claude-paused]\nowner = \"claude\"\n[replacement]\nmode = \"lead\"\n"),
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    assert_eq!(
+        owner.take_over(&task(2), Role::Member, Trouble::NoStatus).unwrap(),
+        Takeover::Wait
+    );
+    let team = owner.locate(&task(2)).unwrap().team;
+    owner
+        .move_to(&task(2), &team, TaskStatus::Paused, &mut Vec::new())
+        .unwrap();
+    owner.wakes.clear();
+
+    owner.wake_held_tasks(at(0));
+
+    assert_eq!(owner.wakes.get(&task(2)), Some(&FAR.parse().unwrap()));
+}
