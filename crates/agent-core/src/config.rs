@@ -2433,7 +2433,7 @@ workers = ["qwen", "qwen"]"#,
                 minutes
             );
         }
-        let error = failure("[limits]\nlead_shift_minutes = 1441\n").to_string();
+        let error = format!("{:?}", failure("[limits]\nlead_shift_minutes = 1441\n"));
         assert!(error.contains("lead_shift_minutes"), "{error}");
         assert!(error.contains("0") && error.contains("1440"), "{error}");
     }
