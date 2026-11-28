@@ -147,6 +147,9 @@ runs_per_worker = 1
 # handed over through [replacement] (another agent, the lead, or it fails and you are told). 0, the default when the key
 # is absent, turns it off.
 round_minutes = 120
+# Worked minutes per coordinator or solo holder before rotation; 0 (default) disables it, maximum 1440.
+# The state and selection rule are available; automatic daemon shifts are not enabled yet.
+lead_shift_minutes = 120
 
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
 # before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose
