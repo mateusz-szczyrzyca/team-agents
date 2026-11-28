@@ -17,8 +17,8 @@ fn now() -> Timestamp {
 }
 
 /// The `hold_at` of these tests: 0.9.
-fn hold_at() -> Option<HoldAt> {
-    Some(HoldAt::new(0.9).unwrap())
+fn hold_at() -> HoldAt {
+    HoldAt::new(0.9).unwrap()
 }
 
 /// A reading of `window` used by `used`, that resets at `resets_at`, read a minute before [`now`].
@@ -36,13 +36,13 @@ fn hold_table() {
     let cases: Vec<(&str, Option<HoldAt>, Vec<KeptReading>, Hold)> = vec![
         (
             "below hold_at",
-            hold_at(),
+            Some(hold_at()),
             vec![kept(five, 0.89, "2026-11-28T12:00:00Z")],
             Hold::Open,
         ),
         (
             "at hold_at",
-            hold_at(),
+            Some(hold_at()),
             vec![kept(five, 0.9, "2026-11-28T12:00:00Z")],
             Hold::Held {
                 window: five,
@@ -52,7 +52,7 @@ fn hold_table() {
         ),
         (
             "above hold_at",
-            hold_at(),
+            Some(hold_at()),
             vec![kept(seven, 0.95, "2026-11-30T00:00:00Z")],
             Hold::Held {
                 window: seven,
@@ -66,22 +66,22 @@ fn hold_table() {
             vec![kept(five, 1.0, "2026-11-28T12:00:00Z")],
             Hold::Open,
         ),
-        ("no reading", hold_at(), vec![], Hold::Open),
+        ("no reading", Some(hold_at()), vec![], Hold::Open),
         (
             "a reading past its reset",
-            hold_at(),
+            Some(hold_at()),
             vec![kept(five, 0.99, "2026-11-28T09:30:00Z")],
             Hold::Open,
         ),
         (
             "a reading that resets this very moment",
-            hold_at(),
+            Some(hold_at()),
             vec![kept(five, 0.99, "2026-11-28T10:00:00Z")],
             Hold::Open,
         ),
         (
             "two windows of which one is above",
-            hold_at(),
+            Some(hold_at()),
             vec![
                 kept(five, 0.2, "2026-11-28T12:00:00Z"),
                 kept(seven, 0.93, "2026-11-30T00:00:00Z"),
@@ -94,7 +94,7 @@ fn hold_table() {
         ),
         (
             "two windows above: held until the later reset",
-            hold_at(),
+            Some(hold_at()),
             vec![
                 kept(five, 0.95, "2026-11-28T12:00:00Z"),
                 kept(seven, 0.93, "2026-11-30T00:00:00Z"),
@@ -107,7 +107,7 @@ fn hold_table() {
         ),
         (
             "the window above has reset, the other is below",
-            hold_at(),
+            Some(hold_at()),
             vec![
                 kept(five, 0.99, "2026-11-28T09:00:00Z"),
                 kept(seven, 0.5, "2026-11-30T00:00:00Z"),
