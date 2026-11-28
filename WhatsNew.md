@@ -9,11 +9,20 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.151.0 · agent-core 0.151.0 · agent-runtime 0.137.0 — 28.11.2026 — PR #368
+## agent 0.152.0 · agent-core 0.152.0 · agent-runtime 0.137.0 — 28.11.2026 — PR #368
 
 ### New features
 - [agent] [agent-core] `agent status` writes the account in brackets after an agent that has one: `comp-claude-1 [comp-claude]`. The same goes for the tasks of `agent status <round>`. The line of an agent without an account is as before.
 - [agent-core] [agent-runtime] `agent debug` has an `## Accounts` section in its summary: each account with its owner, its agents and investigators, and the names — never the values — of its `env` and secret variables. A configuration that is missing or does not load is reported there as unreadable.
+
+## agent 0.151.0 · agent-core 0.151.0 — 28.11.2026 — PR #364
+
+### New features
+- [agent] [agent-core] While an account is paused, none of its agents is picked: not an investigator for a review or an investigation, not a replacement for a waiting task, not a worker for a request. Another account of the same owner and agents without an account are picked as before; when only agents of a paused account could be picked, the work waits in the queue, not failed, until the reset.
+
+### Bug fixes
+- [agent] A request kept by a restart of the daemon was given again to a worker of a paused account, and a worker's recount of runs could lift its exclusion within one pass; both now keep it out. A team's workers of a paused account take no request, on the first or the second try, a task refused by its provider is not handed to an agent or investigator of a paused account, and the lead of a paused account is not given a member's work: when the lead is the only one left to take it, the member's task is paused until the reset and carries on then, not failed — also when the daemon restarts in between, and a task held for its own account is woken at the end of its own account's pause, not its lead's.
+- [agent-core] `state.json` keeps, for a task that waits for its lead's paused account, when it is woken (`account_waits`, written only when there are any); a state without it loads as before.
 
 ## agent 0.150.0 · agent-core 0.150.0 · agent-runtime 0.136.0 — 28.11.2026 — PR #362
 

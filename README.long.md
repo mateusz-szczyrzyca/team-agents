@@ -263,6 +263,13 @@ date too when the reset is more than a day away). The pause is in `state.json` (
 the daemon keeps it and its reset. The pause and its end are `decision_taken` records with `decision` `account`
 ([`docs/log.md`](docs/log.md)).
 
+While an account is paused, **no agent of it is picked**: not an investigator for a review or for an investigation, not a
+replacement for a task that waits or whose agent is changed, not a worker for a request. They are chosen among the agents
+of accounts that are not paused and agents without an account; when every agent that could be picked is of a paused
+account, the review, the hand-over or the request waits in the queue, not failed, and goes on at the reset.
+The same holds for `[replacement] mode = "lead"` (and `auto` with no agent listed): a member's work whose ladder is
+exhausted is not given to a lead of a paused account; the member's task is paused until the reset and goes on then, also after a restart of the daemon.
+
 An agent that runs with an account is written with it in brackets on its task line in `agent status`
 (`comp-claude-1 [comp-claude]`), also in the tasks of `agent status <round>`; the line of an agent without an account is
 as it always was. The account comes from
