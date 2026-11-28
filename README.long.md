@@ -243,7 +243,7 @@ repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 **Accounts.** `[accounts.NAME]` of `agents.toml` (an `owner`, optional `env`), `[account_env.NAME]` of `secrets.toml` and
 `account = "NAME"` of an agent or an investigator describe more than one subscription or key. A run of an agent with an account gets
 the account's variables in its environment, over `[agent_env]` (the daemon's environment, `[agent_env]`, the account's
-`env`, the account's secrets: the later wins); the quota of an account is its agents' together: see "The pause of an account" below. An agent with an account is named `<owner>-…`; an account that no agent names, an
+`env`, the account's secrets: the later wins); the quota of an account is its agents' together: see "The pause of an account" below. A session belongs to its account: when the account of an agent changes while its task is open (a changed `account = "NAME"`, read at the next start of the daemon), the next run does not resume the old session but starts a new one from the briefing of `agent renew`, with the reason `account_changed`, and no renewal is counted (an investigator, which works for no round, is told the same in a note of its prompt, with the plan its session before saved in its worktree). An agent with an account is named `<owner>-…`; an account that no agent names, an
 agent that names a missing account, a name without its owner, a variable set in both `env` and `[account_env.NAME]`
 and an `[account_env.NAME]` without an account are refused when the home is loaded, naming the
 account and never a value; the values of `[account_env.NAME]` are cut from `agent debug` bundles and the history.
@@ -1317,9 +1317,13 @@ it, and the history (`history.db`, schema 35 now) when the daemon opens it for w
 history as it is. A version that adds a field, a log event or a table migrates forward and keeps every record. The way
 back is closed: **an older daemon refuses a state or a history of a newer schema**, so keep a copy of `state.json` and
 `history.db` before an upgrade if you may need to return. The CLI and the daemon talk over `agent.sock` with protocol
-negotiation (versions 3 to 8 now): a newer CLI falls back to what an older daemon speaks, and loses only the fields the
-older protocol lacks; an older daemon refuses a command it does not know, such as `remove`. Restart the daemon after
-installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version
+negotiation (versions 3 to 10 now): a newer CLI falls back to what an older daemon speaks, and loses only the fields the
+older protocol lacks; an older daemon refuses a command declared with a newer protocol version with `UnsupportedVersion`,
+such as `swap` (protocol 10). The socket API introduces `Command::Swap(SwapRequest { task, agent })` and replies with
+`Reply::Applied` or structured `SwapRefusal` failure causes; the full `agent swap` CLI command is delivered in a later item.
+A human-selected holder may be of any tier except a worker; workers serve requests and cannot hold solo, coordinator or member tasks.
+Existing state files and historical states without reason `swap` read as before; an older daemon cannot read a state
+holding reason `swap`. Restart the daemon after installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version
 changes and what you must do (**Action:**); [`docs/state.md`](docs/state.md) and [`docs/history.md`](docs/history.md)
 have the formats.
 

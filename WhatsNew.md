@@ -9,13 +9,24 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.149.0 · agent-core 0.149.0 — 27.11.2026 — PR #364
+## agent 0.151.0 · agent-core 0.151.0 — 28.11.2026 — PR #364
 
 ### New features
 - [agent] [agent-core] While an account is paused, none of its agents is picked: not an investigator for a review or an investigation, not a replacement for a waiting task, not a worker for a request. Another account of the same owner and agents without an account are picked as before; when only agents of a paused account could be picked, the work waits in the queue, not failed, until the reset.
 
 ### Bug fixes
 - [agent] A request kept by a restart of the daemon was given again to a worker of a paused account, and a worker's recount of runs could lift its exclusion within one pass; both now keep it out. A team's workers of a paused account take no request, on the first or the second try, a task refused by its provider is not handed to an agent or investigator of a paused account, and the lead of a paused account is not given a member's work: when the lead is the only one left to take it, the member's task is paused until the reset and carries on then, not failed.
+
+## agent 0.150.0 · agent-core 0.150.0 · agent-runtime 0.136.0 — 28.11.2026 — PR #362
+
+### New features
+- [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task. An investigator, which works for no round, is told in its prompt that the account changed, and given the plan its session before saved in its worktree.
+- [agent-core] `state.json` keeps the account each task's session began under (`session_accounts`, written only when there are any); a state without it loads as before.
+
+## agent 0.149.0 · agent-core 0.149.0 — 28.11.2026 — PR #363
+
+### New features
+- [agent] [agent-core] A human's swap skips only the tier rule, allowing tasks to be handed over to any configured tier except workers, with new socket command `Swap` on protocol 10, trouble reason `swap`, and typed refusal causes. An older daemon cannot read a state holding `swap`.
 
 ## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
 
@@ -24,7 +35,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 - [agent] `agent status` shows a line per paused account: `account comp-claude paused until 15:30 (quota)`.
 - [agent-core] `state.json` keeps which tasks the pause of an account holds (`account_held_tasks`, written only when there are any), so that a restart of the daemon keeps the pause and its reset and never wakes a task you paused yourself.
 
-## agent-core 0.147.0 — 27.11.2026 — PR pending
+## agent-core 0.147.0 — 27.11.2026 — PR #360
 
 ### Enhancements
 - [agent-core] Agents are told when to leave a finding about files and when to resolve one.

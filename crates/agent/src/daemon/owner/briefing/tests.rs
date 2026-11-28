@@ -188,6 +188,18 @@ async fn a_briefing_after_the_daemon_went_down_says_so_and_that_it_was_not_the_a
     );
 }
 
+#[tokio::test]
+async fn a_briefing_after_swap_says_so() {
+    assert_eq!(reason_word(Trouble::Swap), "swap");
+
+    let mut cut = facts(Completeness::All);
+    cut.reason = Trouble::Swap;
+
+    let text = render(&cut).await;
+
+    assert!(text.contains("`swap`"), "{text}");
+}
+
 // ---- the judgements that still hold ------------------------------------------------------------------------------
 
 /// The plan of `text`.

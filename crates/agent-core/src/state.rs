@@ -49,6 +49,8 @@ mod renewal;
 mod renewal_tests;
 mod round;
 mod run;
+#[cfg(test)]
+mod session_account_tests;
 pub mod split;
 mod strict;
 mod team;
@@ -67,7 +69,7 @@ pub use findings::{
     RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
-pub use holding::{HandOverError, Holding};
+pub use holding::{Choice, HandOverError, Holding};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, ConflictInvestigation, FixPass, FixingWithoutFixPass, InvalidAdvance,
     InvalidReviews, ItemMut, ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection,
@@ -132,6 +134,14 @@ pub struct UnsupportedSchema {
     pub found: u64,
 }
 
+/// The accounts the sessions of the tasks began under, kept behind a box: a [`State`] lies inline in every owner and in the
+/// futures that hold one, which clippy's `large_futures` refuses once they pass 16 KiB.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionAccounts {
+    /// The account each task's session began under; see [`State::session_account`].
+    by_task: BTreeMap<TaskId, crate::config::AccountName>,
+}
+
 /// The state of the harness: every team and, in them, every task.
 ///
 /// Task IDs are unique in the whole state, team IDs too; [`State::insert_team`] and [`State::add_reviewer`] keep
@@ -157,6 +167,8 @@ pub struct State {
     /// The accounts whose provider refused a run and no run of their agents starts before the time of their pause; an
     /// account without an entry is not paused.
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
+    /// The account the session of each task began under; a task without an entry has a session with no account, or none.
+    session_accounts: Box<SessionAccounts>,
     /// The tasks the pause of their account holds: the daemon paused them for it, so only the end of that pause wakes
     /// them, never a pause of the human. A task without an entry is not held.
     account_held: BTreeSet<TaskId>,
@@ -193,6 +205,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no account is paused.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     accounts: &'a BTreeMap<crate::config::AccountName, AccountPause>,
+    /// See [`State`]; omitted when no session runs under an account.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    session_accounts: &'a BTreeMap<TaskId, crate::config::AccountName>,
     /// See [`State`]; omitted when the pause of no account holds a task.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     account_held_tasks: &'a BTreeSet<TaskId>,
@@ -221,6 +236,7 @@ impl Serialize for State {
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
             accounts: &self.accounts,
+            session_accounts: &self.session_accounts.by_task,
             account_held_tasks: &self.account_held,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
@@ -238,6 +254,7 @@ impl PartialEq for State {
             && self.limit_refusals == other.limit_refusals
             && self.refused_agents == other.refused_agents
             && self.accounts == other.accounts
+            && self.session_accounts == other.session_accounts
             && self.account_held == other.account_held
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
@@ -271,6 +288,9 @@ struct StateWire {
     /// Optional in state written before the pauses of accounts were persisted.
     #[serde(default)]
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
+    /// Optional in state written before the accounts of sessions were persisted.
+    #[serde(default)]
+    session_accounts: BTreeMap<TaskId, crate::config::AccountName>,
     /// Optional in state written before the tasks held by the pause of an account were persisted.
     #[serde(default)]
     account_held_tasks: BTreeSet<TaskId>,
@@ -559,7 +579,7 @@ impl State {
 
     /// A state without teams.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             schema_version: SchemaVersion,
             teams: Vec::new(),
@@ -569,6 +589,9 @@ impl State {
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
             accounts: BTreeMap::new(),
+            session_accounts: Box::new(SessionAccounts {
+                by_task: BTreeMap::new(),
+            }),
             account_held: BTreeSet::new(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
@@ -809,6 +832,51 @@ impl State {
         self.begin_holder_session(task, crate::decide::ladder::Trouble::Human, at)
     }
 
+    /// The account the session of `task` began under; `None` for a session without one, and for a task of a state written
+    /// before accounts kept it.
+    #[must_use]
+    pub fn session_account(&self, task: &TaskId) -> Option<&crate::config::AccountName> {
+        self.session_accounts.by_task.get(task)
+    }
+
+    /// Records that the session of `task` runs under `account` (`None`: under none).
+    pub fn record_session_account(&mut self, task: &TaskId, account: Option<crate::config::AccountName>) {
+        match account {
+            Some(account) => {
+                self.session_accounts.by_task.insert(task.clone(), account);
+            }
+            None => {
+                self.session_accounts.by_task.remove(task);
+            }
+        }
+    }
+
+    /// Starts `task` anew in a new session because the account of its agent changed to `account` (`None`: to none), at
+    /// `at`, and records it as the account of that session. Every role is started anew for it, as for a session above its
+    /// agent's bound, and no renewal is counted. Returns whether the task was started anew: `false` for a task with no run,
+    /// which only has the account recorded.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
+    pub fn begin_account_session(
+        &mut self,
+        task: &TaskId,
+        account: Option<crate::config::AccountName>,
+        at: Timestamp,
+    ) -> Result<bool, RenewTaskError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        let begun = member
+            .begin_holder_session(crate::decide::ladder::Trouble::AccountChanged, at)
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })?;
+        self.record_session_account(task, account);
+        Ok(begun)
+    }
+
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
     /// session of the agent before it is resumed, its bad runs are not counted against the new one, and the next run is
     /// briefed. Unlike [`State::renew_task`] it counts no new session of the task's agent. Returns whether a session was
@@ -966,14 +1034,34 @@ impl State {
         Ok(member.start_waiting(at))
     }
 
-    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
-    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
-    /// that the state it leaves loads again.
+    /// Hands `task` over to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a
+    /// solo agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its
+    /// team, so that the state it leaves loads again.
+    ///
+    /// The choice is [`Choice::Harness`].
     ///
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
     pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
+        self.hand_over_task_as(task, holder, Choice::Harness, at)
+    }
+
+    /// Hands `task` over to `holder`, chosen by `choice` at `at`: only for an agent outside the team, of a solo
+    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
+    /// that the state it leaves loads again.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
+    /// `choice` is [`Choice::Harness`] and `holder` is of a lower tier than the agent that holds it, `holder` is in its
+    /// team or is a worker, or a run of it is going.
+    pub fn hand_over_task_as(
+        &mut self,
+        task: &TaskId,
+        holder: Participant,
+        choice: Choice,
+        at: Timestamp,
+    ) -> Result<(), HandOverError> {
         let no_task = || HandOverError::NoTask { task: task.clone() };
         let team = self
             .teams
@@ -996,13 +1084,20 @@ impl State {
         if held_by == holder {
             return Err(HandOverError::SameHolder { task: task.clone() });
         }
-        // A task is never given to a lower tier; for a solo agent's, a coordinator's or a member's task, the tiers
-        // left are the ones the crew allows it.
-        if crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier()) {
+        // A task is never given to a lower tier by the harness; a human swap allows any tier.
+        if choice == Choice::Harness
+            && crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier())
+        {
             return Err(HandOverError::LowerTier {
                 task: task.clone(),
                 holder: holder.tier(),
                 held: held_by.tier(),
+            });
+        }
+        if let Participant::Worker(agent) = &holder {
+            return Err(HandOverError::Worker {
+                task: task.clone(),
+                agent: agent.clone(),
             });
         }
         let in_team = team
@@ -1096,6 +1191,7 @@ impl State {
         self.wake_deliveries.retain(|task, _| !tasks.contains(task));
         self.limit_refusals.retain(|task, _| !tasks.contains(task));
         self.commit_cuts.retain(|task, _| !tasks.contains(task));
+        self.session_accounts.by_task.retain(|task, _| !tasks.contains(task));
         self.account_held.retain(|task| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
@@ -1262,6 +1358,9 @@ impl TryFrom<StateWire> for State {
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
             accounts: wire.accounts,
+            session_accounts: Box::new(SessionAccounts {
+                by_task: wire.session_accounts,
+            }),
             account_held: wire.account_held_tasks,
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,

@@ -43,6 +43,7 @@ pub mod retry;
 pub mod reviewer;
 pub mod round;
 pub mod round_limit;
+pub mod session_account;
 pub mod slot;
 pub mod split;
 pub mod team;

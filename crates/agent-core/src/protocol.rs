@@ -14,6 +14,10 @@ pub(crate) mod finding_map;
 mod reply;
 mod request;
 
+#[cfg(test)]
+#[path = "protocol/tests.rs"]
+mod swap_tests;
+
 use std::fmt;
 
 use serde::de::DeserializeOwned;
@@ -22,13 +26,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
     Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Removal, Reply, Response, Returned,
-    ReviewPass, RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, TeamSummary, Versions,
+    ReviewPass, RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, SwapRefusal, TeamSummary, Versions,
     mark_runs_elsewhere,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
     ControlRequest, GateRequest, MAX_ANSWERS, MAX_RUN_AGENTS, MAX_SAY_BYTES, RemoveRequest, Request, RequestId,
-    RunRequest, SayError, SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, Target,
+    RunRequest, SayError, SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, SwapRequest, Target,
 };
 
 /// The legacy protocol version, retained for strict clients predating split execution.
@@ -49,6 +53,9 @@ pub const VERSIONS_PROTOCOL_VERSION: u32 = 7;
 /// The negotiated version carrying the reason a member's task failed, on status replies and team updated events.
 pub const FAILED_REASON_PROTOCOL_VERSION: u32 = 8;
 
+/// The negotiated version carrying the swap command and swap refusals.
+pub const SWAP_PROTOCOL_VERSION: u32 = 10;
+
 /// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -64,6 +71,8 @@ pub enum ReplyFormat {
     Versions,
     /// Version eight, including the reason a member's task failed.
     FailedReason,
+    /// Version ten, including the swap command and swap refusals.
+    Swap,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -209,6 +218,15 @@ fn encode_failed_reason<T: Serialize>(message: &T) -> Result<String, EncodeError
     encode(&value)
 }
 
+/// Serializes protocol-ten messages carrying the swap command.
+fn encode_swap<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(SWAP_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
 /// Checks the wire boundary before decoding a supported format into the shared domain types.
 fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, ReplyFormat), ProtocolError> {
     if line.len() > max {
@@ -267,6 +285,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
             }
             serde_json::from_value(value)
                 .map(|message| (message, ReplyFormat::FailedReason))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
+        version if version == u64::from(SWAP_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Swap))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
         found => Err(UnsupportedVersion { found }.into()),
@@ -483,6 +511,7 @@ impl Frame {
             ReplyFormat::Executor => encode_executor(self),
             ReplyFormat::Versions => encode_versions(self),
             ReplyFormat::FailedReason => encode_failed_reason(self),
+            ReplyFormat::Swap => encode_swap(self),
         }
     }
 

@@ -42,6 +42,7 @@ mod returned;
 mod round_limit;
 mod round_state;
 mod rounds;
+mod session_account;
 #[cfg(test)]
 mod shutdown_tests;
 mod snapshots;
@@ -1286,6 +1287,10 @@ impl Owner {
             .filter(|_| matches!(why, Some(Why::Woken)));
         // A session above its agent's bound is started anew first, so that the briefing below is of the new session.
         if let Err(problem) = self.renew_for_context(&task).await {
+            return self.fail_to_start(&task, error_chain(&problem)).await;
+        }
+        // So is a session of another account than the agent has now: a session belongs to its account.
+        if let Err(problem) = self.renew_for_account(&task) {
             return self.fail_to_start(&task, error_chain(&problem)).await;
         }
         // The run works on the branch of its item, whichever branch the worktree was left on.
@@ -3310,6 +3315,10 @@ impl Owner {
             Command::Remove(_) => Err(Failure {
                 kind: FailureKind::Internal,
                 message: "a removal is carried out by the owner, not answered from the state".to_owned(),
+            }),
+            Command::Swap(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "a swap is carried out by the owner, not answered from the state".to_owned(),
             }),
         }
     }
