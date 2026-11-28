@@ -9,13 +9,29 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.152.0 · agent-core 0.152.0 — 28.11.2026 — PR #371
+## agent 0.154.0 · agent-core 0.154.0 — 28.11.2026 — PR #371
 
 ### New features
 - [agent] `agent swap <task> <agent>` gives a task to another configured agent: an ongoing run is ended first, the task is handed over with reason `swap`, and its next run starts in a new session in the same worktree and branch.
 
 ### Bug fixes
 - [agent] [agent-core] Human swaps preserve the automatic replacement allowance while retaining every past holder.
+
+## agent 0.153.0 · agent-core 0.153.0 — 28.11.2026 — PR #372
+
+### New features
+- [agent] [agent-core] An account can have a limit of runs: with `max_runs = 1` in `[accounts.comp-claude]`, the agents of that account never have more than one run going at once. A task beyond the limit stays queued, is not failed, and starts when one of the runs ends.
+- [agent] `agent status` says why such a task waits: `queued, waiting for account comp-claude (1/1 runs)`.
+- [agent] A request for a worker waits in the queue, not failed, while every pool worker that could take it has an account with its `max_runs` going; before, such a worker started a run beside the others.
+
+### Configuration
+- [agent-core] new: `[accounts.NAME] max_runs` (no default: without the key the account has no limit; `0` is refused) — the most runs the agents of the account have going at once, over all teams.
+
+## agent 0.152.0 · agent-core 0.152.0 · agent-runtime 0.137.0 — 28.11.2026 — PR #368
+
+### New features
+- [agent] [agent-core] `agent status` writes the account in brackets after an agent that has one: `comp-claude-1 [comp-claude]`. The same goes for the tasks of `agent status <round>`. The line of an agent without an account is as before.
+- [agent-core] [agent-runtime] `agent debug` has an `## Accounts` section in its summary: each account with its owner, its agents and investigators, and the names — never the values — of its `env` and secret variables. A configuration that is missing or does not load is reported there as unreadable.
 
 ## agent 0.151.0 · agent-core 0.151.0 — 28.11.2026 — PR #364
 
@@ -31,7 +47,6 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### New features
 - [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task. An investigator, which works for no round, is told in its prompt that the account changed, and given the plan its session before saved in its worktree.
 - [agent-core] `state.json` keeps the account each task's session began under (`session_accounts`, written only when there are any); a state without it loads as before.
-
 
 ## agent 0.149.0 · agent-core 0.149.0 — 28.11.2026 — PR #363
 

@@ -751,6 +751,7 @@ impl Owner {
         self.wake_notes.retain(|task, _| !gone(task));
         self.serving.retain(|task, _| !gone(task));
         self.agent_waits.retain(|task| !gone(task));
+        self.account_waits.retain(|task| !gone(task));
         self.halts.retain(|task, _| !gone(task));
         self.holds.retain(|task, _| !gone(task));
         self.incomplete.retain(|task, _| !gone(task));

@@ -113,6 +113,7 @@ account = "comp-claude"
 |---|---|---|---|
 | `owner` | lowercase letters and digits, starting with a letter, up to 32 bytes | required | whose account it is, such as `mateusz` or `comp`. An empty or missing owner, `Comp X` and `comp-x` are refused, naming the account |
 | `env` | table of variable names to texts | empty | variables of the environment that are not secret, such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; a value is 1 to 4096 bytes without control characters |
+| `max_runs` | whole number above 0 | no limit | the most runs the agents of the account have going at once, over all teams. `0` is refused, naming the account; leave the key out for no limit |
 
 The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a letter, not ending with `-`.
 
@@ -125,8 +126,14 @@ The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a let
   account's `[account_env.NAME]`. A variable is set in the `env` of an account or in its `[account_env.NAME]`, not in
   both: loading the home refuses the pair, naming the account and the variable and never a value. A
   `[account_env.NAME]` without an `[accounts.NAME]` is refused too.
-- `max_runs` and `hold_at` are unknown keys until the versions that bring them.
+- **`max_runs` makes a run wait, not fail.** The runs of every agent and investigator of the account are counted together,
+  over all teams. A queued task whose account has its `max_runs` going stays queued and starts when one of those runs
+  ends; `agent status` says `queued, waiting for account comp-claude (1/1 runs)` after it. Agents without an account and
+  accounts without `max_runs` have no such limit; `[limits]` still holds for each agent.
+- `hold_at` is an unknown key until the version that brings it.
 - An agent without an account gets the environment it always got.
+- `agent status` writes the account in brackets after an agent that has one, and `agent debug` lists each account with
+  its owner, its agents and the names — never the values — of its `env` and secret variables.
 - The values of `[account_env.NAME]` are cut from `agent debug` bundles and from the history, like every secret.
 
 The harness knows no provider: it only sets variables. Each provider reads its login from a place you can point it

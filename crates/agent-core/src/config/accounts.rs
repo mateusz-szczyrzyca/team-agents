@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use serde::Deserialize;
@@ -99,6 +100,8 @@ pub struct Account {
     owner: OwnerName,
     /// The variables of the environment of a run with this account that are not secret.
     env: BTreeMap<EnvName, EnvValue>,
+    /// The most runs the agents of the account may have going at once; `None` for no limit.
+    max_runs: Option<NonZeroU32>,
 }
 
 impl Account {
@@ -113,6 +116,12 @@ impl Account {
     pub fn env(&self) -> &BTreeMap<EnvName, EnvValue> {
         &self.env
     }
+
+    /// The most runs the agents of the account may have going at once, over all teams; `None` when it has no limit.
+    #[must_use]
+    pub const fn max_runs(&self) -> Option<NonZeroU32> {
+        self.max_runs
+    }
 }
 
 /// What `[accounts.NAME]` says in the file, before the owner is checked: a missing owner and a bad one are told apart
@@ -126,6 +135,9 @@ pub(super) struct RawAccount {
     /// The `env` table.
     #[serde(default)]
     env: BTreeMap<EnvName, EnvValue>,
+    /// The `max_runs` key, as written: `0` is refused when the account is checked, not read as no limit.
+    #[serde(default)]
+    max_runs: Option<u32>,
 }
 
 /// Why the accounts of an `agents.toml` are refused.
@@ -145,6 +157,12 @@ pub enum AccountError {
         /// The rule the owner breaks, with the text that was written.
         #[source]
         source: Box<InvalidValue>,
+    },
+    /// An account's `max_runs` is `0`: an account that may never run anything is a mistake; leave the key out for no limit.
+    #[error("account {account} has `max_runs = 0`: use a number above 0, or leave the key out for no limit")]
+    MaxRunsZero {
+        /// The account.
+        account: AccountName,
     },
     /// An agent or an investigator names an account that has no `[accounts.NAME]` table.
     #[error("{} of {name}: account {account} is not defined in [accounts]", key.section())]
@@ -252,7 +270,17 @@ fn check_account(name: &AccountName, raw: RawAccount) -> Result<Account, Account
             account: name.clone(),
             source: Box::new(source),
         })?;
-    Ok(Account { owner, env: raw.env })
+    let max_runs = match raw.max_runs {
+        None => None,
+        Some(configured) => {
+            Some(NonZeroU32::new(configured).ok_or_else(|| AccountError::MaxRunsZero { account: name.clone() })?)
+        }
+    };
+    Ok(Account {
+        owner,
+        env: raw.env,
+        max_runs,
+    })
 }
 
 /// Checks that the agent or investigator `name` of `key`, which names `account`, has an account to use and is named

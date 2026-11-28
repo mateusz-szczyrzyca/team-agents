@@ -9,6 +9,7 @@
 
 pub mod account_candidates;
 pub mod account_pause;
+pub mod account_slot;
 pub mod asleep;
 pub mod assign;
 pub mod busy;
