@@ -169,7 +169,7 @@ fn account_no_agent_names() {
 
 #[test]
 fn max_runs_and_hold_at_are_unknown_keys_until_their_items() {
-    for key in ["max_runs = 2", "hold_at = 0.9"] {
+    for key in ["hold_at = 0.9"] {
         let text = format!("[accounts.comp-claude]\nowner = \"comp\"\n{key}\n");
         assert!(matches!(load(&text), ConfigError::Parse(_)), "{key}");
     }
