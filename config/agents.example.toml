@@ -150,7 +150,7 @@ runs_per_worker = 1
 # is absent, turns it off.
 round_minutes = 120
 # Worked minutes per coordinator or solo holder before rotation; 0 (default) disables it, maximum 1440.
-# The state and selection rule are available; automatic daemon shifts are not enabled yet.
+# The daemon rotates on minute ticks once the round has a pull request; a gate may finish first (up to 15 minutes).
 lead_shift_minutes = 120
 
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
