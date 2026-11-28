@@ -1,6 +1,7 @@
 //! `agent status`: the teams the daemon knows, their rounds, and what each of their tasks is doing — or, for a round, its
 //! item, the tasks that worked for it, its pull request and its review passes.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -8,6 +9,7 @@ use std::time::SystemTime;
 use std::num::NonZeroUsize;
 
 use agent_core::cli::RunUsage;
+use agent_core::config::AccountName;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{AgentName, RoundId, TaskId, TeamId};
 use agent_core::local_time::Zone;
@@ -1004,6 +1006,16 @@ struct Under<'a> {
     workers: &'a dyn Fn(&TeamSummary) -> Vec<workers::Served>,
 }
 
+/// What [`render_with_accounts`] writes besides the tasks themselves: what goes under them, and the account of each
+/// agent that has one, which the line of its task shows after its name.
+#[derive(Clone, Copy)]
+struct Extras<'a> {
+    /// What goes under the lines of a team.
+    under: Under<'a>,
+    /// The account of each agent and investigator that runs with one.
+    accounts: &'a BTreeMap<AgentName, AccountName>,
+}
+
 /// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
 fn render_with_requests(
     teams: &[TeamSummary],
@@ -1014,6 +1026,33 @@ fn render_with_requests(
     under: Under<'_>,
     zone: Zone,
 ) -> String {
+    let accounts = BTreeMap::new();
+    render_with_accounts(
+        teams,
+        view,
+        detail,
+        activity,
+        rounds,
+        Extras {
+            under,
+            accounts: &accounts,
+        },
+        zone,
+    )
+}
+
+/// [`render_with_requests`] with the account of each agent that has one told after its name.
+fn render_with_accounts(
+    teams: &[TeamSummary],
+    view: View,
+    detail: Detail,
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    extras: Extras<'_>,
+    zone: Zone,
+) -> String {
+    let Extras { under, accounts } = extras;
+    let _ = accounts;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -1437,3 +1476,7 @@ mod versions_tests;
 #[cfg(test)]
 #[path = "status/tests/split_tier.rs"]
 mod split_tier_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_labels.rs"]
+mod account_label_tests;
