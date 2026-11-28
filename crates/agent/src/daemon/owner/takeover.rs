@@ -129,7 +129,7 @@ impl Owner {
             }
             Chosen::Wait { until } => {
                 // The task keeps its holder: it is paused, and woken with the accounts' own wake-ups at the reset.
-                self.hold(task, until);
+                self.hold_waiting(task, until);
                 log_decision(
                     "takeover",
                     &format!("task={task}, from={}", held.name()),

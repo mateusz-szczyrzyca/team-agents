@@ -56,3 +56,17 @@ fn a_released_task_waits_for_nothing_and_the_state_omits_the_waits() {
     assert_eq!(state.wait_of_task(&task("task-20261127-100000-bbbb")), None);
     assert!(!state.to_json().unwrap().contains("account_waits"));
 }
+
+#[test]
+fn a_state_written_with_held_tasks_and_no_waits_loads_with_no_wait() {
+    let mut state = state_with_a_paused_account();
+    state.hold_task_for_account(task("task-20261127-100000-aaaa"));
+    let json = state.to_json().unwrap();
+    assert!(json.contains("account_held_tasks"), "{json}");
+    assert!(!json.contains("account_waits"), "{json}");
+
+    let back = State::from_json(&json).unwrap();
+
+    assert_eq!(back.wait_of_task(&task("task-20261127-100000-aaaa")), None);
+    assert_eq!(back.tasks_held_by_account().count(), 1);
+}

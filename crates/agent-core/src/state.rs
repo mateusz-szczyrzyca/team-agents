@@ -144,6 +144,14 @@ struct SessionAccounts {
     by_task: BTreeMap<TaskId, crate::config::AccountName>,
 }
 
+/// When the held tasks that wait for another account are woken, kept behind a box for the reason of
+/// [`SessionAccounts`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AccountWaits {
+    /// The wake time of each task that waits for the pause of another account; see [`State::wait_of_task`].
+    by_task: BTreeMap<TaskId, Timestamp>,
+}
+
 /// The state of the harness: every team and, in them, every task.
 ///
 /// Task IDs are unique in the whole state, team IDs too; [`State::insert_team`] and [`State::add_reviewer`] keep
@@ -174,6 +182,9 @@ pub struct State {
     /// The tasks the pause of their account holds: the daemon paused them for it, so only the end of that pause wakes
     /// them, never a pause of the human. A task without an entry is not held.
     account_held: BTreeSet<TaskId>,
+    /// When each task of `account_held` that waits for the pause of another account than its own agent's — its lead's —
+    /// is woken: that pause's end. A held task without an entry is held by its own agent's account.
+    account_waits: Box<AccountWaits>,
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -213,6 +224,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when the pause of no account holds a task.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     account_held_tasks: &'a BTreeSet<TaskId>,
+    /// See [`State`]; omitted when no held task waits for the pause of another account.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    account_waits: &'a BTreeMap<TaskId, Timestamp>,
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -240,6 +254,7 @@ impl Serialize for State {
             accounts: &self.accounts,
             session_accounts: &self.session_accounts.by_task,
             account_held_tasks: &self.account_held,
+            account_waits: &self.account_waits.by_task,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
         }
@@ -258,6 +273,7 @@ impl PartialEq for State {
             && self.accounts == other.accounts
             && self.session_accounts == other.session_accounts
             && self.account_held == other.account_held
+            && self.account_waits == other.account_waits
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
@@ -296,6 +312,9 @@ struct StateWire {
     /// Optional in state written before the tasks held by the pause of an account were persisted.
     #[serde(default)]
     account_held_tasks: BTreeSet<TaskId>,
+    /// Optional in state written before the waits of held tasks were persisted.
+    #[serde(default)]
+    account_waits: BTreeMap<TaskId, Timestamp>,
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -500,19 +519,21 @@ impl State {
     /// Records that no pause of an account holds `task` any more.
     pub fn release_task_from_account(&mut self, task: &TaskId) {
         self.account_held.remove(task);
+        self.account_waits.by_task.remove(task);
     }
 
     /// Records that `task` waits for the pause of an account that is not its own agent's — its lead's — and is woken at
     /// `until`, and that the pause of an account holds it.
-    pub fn hold_task_waiting(&mut self, task: TaskId, _until: Timestamp) {
-        self.account_held.insert(task);
+    pub fn hold_task_waiting(&mut self, task: TaskId, until: Timestamp) {
+        self.account_held.insert(task.clone());
+        self.account_waits.by_task.insert(task, until);
     }
 
     /// When `task` is woken because it waits for the pause of another account than its own agent's; `None` for a task
     /// the pause of its own agent's account holds, and for one that is not held.
     #[must_use]
-    pub fn wait_of_task(&self, _task: &TaskId) -> Option<Timestamp> {
-        None
+    pub fn wait_of_task(&self, task: &TaskId) -> Option<Timestamp> {
+        self.account_waits.by_task.get(task).copied()
     }
 
     /// The tasks the pause of an account holds, in the order of their IDs.
@@ -608,6 +629,7 @@ impl State {
                 by_task: BTreeMap::new(),
             }),
             account_held: BTreeSet::new(),
+            account_waits: Box::default(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
         }
@@ -1208,6 +1230,7 @@ impl State {
         self.commit_cuts.retain(|task, _| !tasks.contains(task));
         self.session_accounts.by_task.retain(|task, _| !tasks.contains(task));
         self.account_held.retain(|task| !tasks.contains(task));
+        self.account_waits.by_task.retain(|task, _| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
     }
@@ -1377,6 +1400,9 @@ impl TryFrom<StateWire> for State {
                 by_task: wire.session_accounts,
             }),
             account_held: wire.account_held_tasks,
+            account_waits: Box::new(AccountWaits {
+                by_task: wire.account_waits,
+            }),
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
         };

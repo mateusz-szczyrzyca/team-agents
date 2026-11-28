@@ -205,6 +205,12 @@ impl Owner {
         self.wakes.insert(task.clone(), until);
     }
 
+    /// Records that `task` waits for the pause of the account of its lead and wakes at `until`, the end of that pause.
+    pub(super) fn hold_waiting(&mut self, task: &TaskId, until: Timestamp) {
+        self.parts.state.hold_task_waiting(task.clone(), until);
+        self.wakes.insert(task.clone(), until);
+    }
+
     /// Pauses every task of the account that waits in the queue, except `refused`, which the caller pauses; returns
     /// how many it paused.
     async fn pause_queued_tasks(
@@ -289,16 +295,13 @@ impl Owner {
                 self.parts.state.release_task_from_account(&task);
                 continue;
             }
-            // The task waits for the pause of its own agent's account or, when a take-over left it with its holder
-            // (`Takeover::Wait`), for that of its lead's account; the later reset is the one to wake at.
-            let lead = found.team.crew().coordinator().map(|lead| lead.agent().name());
-            let until = [Some(found.member.agent().name()), lead]
-                .into_iter()
-                .flatten()
-                .filter_map(|agent| self.account_named(agent))
-                .filter_map(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
-                .max()
-                .unwrap_or(now);
+            // A task that waits for its lead's account is woken when that pause ends; any other held task, when the
+            // pause of its own agent's account does.
+            let until = self.parts.state.wait_of_task(&task).unwrap_or_else(|| {
+                self.account_named(found.member.agent().name())
+                    .and_then(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
+                    .unwrap_or(now)
+            });
             self.wakes.insert(task, until);
         }
     }
