@@ -11,7 +11,7 @@ mod steering_process {
 
     use agent_core::config::{AbsolutePath, RepoName};
     use agent_core::ids::{TaskId, TeamId};
-    use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, TeamMembers, Timestamp};
+    use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, Timestamp};
     use agent_runtime::store::Home;
     use rustix::process::{Pid, Signal};
 
@@ -236,6 +236,7 @@ mod steering_process {
 
     #[test]
     fn team_coordinator_swapped_to_opencode_agent_runs_opencode_in_the_same_worktree() {
+        use agent_core::state::TeamMembers;
         const COORD_TASK: &str = "task-20261111-153001-c001";
         const MEMBER_TASK: &str = "task-20261111-153001-m001";
         const TEAM_ID: &str = "team-20261111-153000-t001";
