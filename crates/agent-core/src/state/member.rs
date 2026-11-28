@@ -1163,6 +1163,9 @@ mod tests {
         agent: Participant,
         /// See [`Member`].
         status: TaskStatus,
+        /// Human-selected hand-overs in the persisted member shape.
+        #[serde(default)]
+        human_handovers: usize,
         /// See [`Member`].
         #[serde(default)]
         runs: Vec<Run>,
@@ -1199,7 +1202,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
-                human_handovers: 0,
+                human_handovers: wire.human_handovers,
                 waiting_since: None,
                 holder_after_run: None,
                 role: None,
