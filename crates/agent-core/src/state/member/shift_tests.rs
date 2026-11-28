@@ -12,7 +12,14 @@ fn completed_runs_add_worked_seconds_once() {
     assert_eq!(task.lead_worked_secs(), 60);
     assert_eq!(task.end_run(at(80), RunEnd::Stopped), Err(RunError::NotRunning));
     task.begin_run(run(2), at(100), None).unwrap();
-    assert!(task.end_run(at(90), RunEnd::Stopped).is_err());
+    assert_eq!(
+        task.end_run(at(90), RunEnd::Stopped),
+        Err(RunError::EndsBeforeStart {
+            run: run(2),
+            started_at: at(100),
+            at: at(90)
+        })
+    );
     assert_eq!(task.lead_worked_secs(), 60);
     task.end_run(at(130), RunEnd::Stopped).unwrap();
     assert_eq!(task.lead_worked_secs(), 90);
