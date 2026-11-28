@@ -66,6 +66,7 @@ use std::time::Duration;
 
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, AccountName, InvalidValue};
+use agent_core::decide::account_slot::{AccountFull, AccountSlot, slot_of};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::limit::{Decision, Limit, Refusal, decide, next_refusals};
 use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
@@ -1083,7 +1084,7 @@ impl Owner {
         if !self.space_allows_run().await {
             return Ok(());
         }
-        let going = self.all_runs_going();
+        let mut going = self.all_runs_going();
         let decisions = plan_starts(&queued, &going, self.parts.settings.config.limits());
         for (task, slot) in decisions {
             // Each launch is measured on its own: the space may have fallen since the last one started.
@@ -1100,6 +1101,18 @@ impl Owner {
             }
             if !self.try_pending_team_replace_for(&task).await? {
                 continue;
+            }
+            // An account has its limit of runs over all its agents: a task whose account holds it waits, queued.
+            if let Some(item) = queued.iter().find(|item| item.task == task) {
+                if let AccountSlot::Full(full) = slot_of(&self.parts.settings.config, &item.agent, &going) {
+                    self.note_account_wait(&task, &full);
+                    continue;
+                }
+                going.push(Going {
+                    agent: item.agent.clone(),
+                    team: item.team.clone(),
+                    task: task.clone(),
+                });
             }
             self.agent_waits.remove(&task);
             Box::pin(self.start(task)).await?;
@@ -1252,6 +1265,23 @@ impl Owner {
             );
         }
         Ok(())
+    }
+
+    /// Notes that the queued `task` waits because its account has its most runs going; the log says so once, not at every
+    /// look of the loop.
+    fn note_account_wait(&mut self, task: &TaskId, full: &AccountFull) {
+        if self.agent_waits.insert(task.clone()) {
+            tracing::debug!(
+                event = LogEvent::DecisionTaken.as_str(),
+                decision = "account_slot",
+                account = %full.account,
+                task = %task,
+                running = full.running,
+                max_runs = full.limit.get(),
+                result = "wait",
+                "the task waits: its account has its most runs going"
+            );
+        }
     }
 
     /// Whether the shared process ceiling and disk reserve permit another launch.
