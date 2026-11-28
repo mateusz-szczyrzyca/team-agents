@@ -625,3 +625,35 @@ async fn the_editor_of_the_configuration_wins_over_the_environment() {
     result.unwrap();
     assert_eq!(sent_answers(&daemon), [[(1, "Use the disk".to_owned())]]);
 }
+
+#[tokio::test]
+async fn swap_command_asks_daemon_and_prints_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), |request| match &request.command {
+        Request::Show(_) => line(
+            request,
+            Reply::Task {
+                team: team_id(1),
+                role: agent_core::kinds::Role::Coordinator,
+                member: Box::new(agent_core::state::Member::new(
+                    task(1),
+                    agent_core::state::Participant::Normal("claude-1".parse().unwrap()),
+                )),
+            },
+        ),
+        Request::Swap(_) => line(request, Reply::Applied { tasks: vec![task(1)] }),
+        _ => panic!("unexpected request: {request:?}"),
+    });
+
+    let (result, out) = steer(&environment(&dir), &["swap", task(1).as_str(), "glm-1"]).await;
+
+    result.unwrap();
+    assert_eq!(out, format!("{}: claude-1 → glm-1\n", task(1)));
+    assert_eq!(
+        daemon.requests()[1].command,
+        Request::Swap(agent_core::protocol::SwapRequest {
+            task: task(1),
+            agent: "glm-1".parse().unwrap(),
+        })
+    );
+}

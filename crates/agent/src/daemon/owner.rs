@@ -2669,7 +2669,14 @@ impl Owner {
         let held = self
             .participant_of(refused_agent)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        self.hand_task_over(task, new_agent, &held, agent_core::state::Choice::Harness, Trouble::NoStatus, now)?;
+        self.hand_task_over(
+            task,
+            new_agent,
+            &held,
+            agent_core::state::Choice::Harness,
+            Trouble::NoStatus,
+            now,
+        )?;
         log_decision(
             "takeover",
             &format!("task={task}, from={}", held.name()),

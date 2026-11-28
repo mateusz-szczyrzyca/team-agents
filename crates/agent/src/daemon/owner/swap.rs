@@ -162,14 +162,7 @@ impl Owner {
         };
 
         // 4. Hand the task over with Choice::Human and Trouble::Swap.
-        self.hand_task_over(
-            &request.task,
-            &request.agent,
-            &held,
-            Choice::Human,
-            Trouble::Swap,
-            now,
-        )?;
+        self.hand_task_over(&request.task, &request.agent, &held, Choice::Human, Trouble::Swap, now)?;
 
         // 5. If it was running, queue the task so its new run starts.
         let mut events = Vec::new();
