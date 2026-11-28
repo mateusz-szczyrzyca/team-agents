@@ -119,6 +119,10 @@ pub struct Member {
 }
 
 /// Preserve the old serialized shape when no work has accrued.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "Serde predicates must take a reference."
+)]
 fn worked_is_zero(seconds: &u64) -> bool {
     *seconds == 0
 }
