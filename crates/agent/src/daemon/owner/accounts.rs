@@ -46,9 +46,17 @@ impl Owner {
 
     /// Whether the account of `agent` is paused at `now`: none of its runs starts.
     pub(super) fn account_is_paused(&self, agent: &str, now: Timestamp) -> bool {
-        self.account_named(agent)
-            .and_then(|account| self.parts.state.account_pause(&account).map(|pause| now < pause.until))
-            .unwrap_or(false)
+        self.account_paused_until(agent, now).is_some()
+    }
+
+    /// The end of the pause of the account of `agent` when it is paused at `now`.
+    pub(super) fn account_paused_until(&self, agent: &str, now: Timestamp) -> Option<Timestamp> {
+        let account = self.account_named(agent)?;
+        self.parts
+            .state
+            .account_pause(&account)
+            .map(|pause| pause.until)
+            .filter(|until| now < *until)
     }
 
     /// The agents that take nothing new at `now`: those their provider refused and the agents and investigators whose
@@ -192,7 +200,7 @@ impl Owner {
     }
 
     /// Records that the pause of the account holds `task`, which wakes at `until`.
-    fn hold(&mut self, task: &TaskId, until: Timestamp) {
+    pub(super) fn hold(&mut self, task: &TaskId, until: Timestamp) {
         self.parts.state.hold_task_for_account(task.clone());
         self.wakes.insert(task.clone(), until);
     }
